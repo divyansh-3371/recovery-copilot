@@ -44,5 +44,17 @@ def run_pipeline(
         decisions.append(decision)
 
     results = simulate_batch(df, decisions, systemic_issues)
+
+    # promise-to-pay tracker: a broken promise gets its own audit entry and
+    # an explicit escalation, rather than silently vanishing from the trail
+    broken = results[results["promise_to_pay_status"] == "broken"]
+    for _, r in broken.iterrows():
+        audit.log(
+            transaction_id=r["transaction_id"],
+            action="ESCALATE_HUMAN",
+            reasoning=[r["promise_to_pay_note"], "Promise-to-pay tracker: escalating broken promise for manual follow-up."],
+            extra={"escalation_source": "promise_to_pay_tracker"},
+        )
+
     summary = summarize(results)
     return results, summary, model, systemic_issues

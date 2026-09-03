@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from agent.policy import CARD_UPDATE_REASONS, Decision
+from agent.promise_tracker import classify_promise
 from agent.root_cause import SystemicIssue
 
 RNG_SEED = 123
@@ -29,9 +30,12 @@ _CHANNEL_MULTIPLIER = {
 }
 
 
+RETRY_FRIENDLY_REASONS = ("bank_timeout", "network_drop", "insufficient_funds", "mandate_bank_error", "mandate_insufficient_funds")
+
+
 def agent_outcome_multiplier(decision: Decision, failure_reason: str) -> float:
     if decision.action == "RETRY_PAYMENT":
-        return 1.05 if failure_reason in ("bank_timeout", "network_drop", "insufficient_funds") else 0.6
+        return 1.05 if failure_reason in RETRY_FRIENDLY_REASONS else 0.6
     if decision.action == "SEND_MESSAGE":
         return _CHANNEL_MULTIPLIER.get(decision.channel, 0.85)
     if decision.action == "ESCALATE_HUMAN":
@@ -81,6 +85,11 @@ def simulate_batch(
         elif row["previous_attempts"] >= 3:
             baseline_violation = "exceeded max-attempts compliance cap"
 
+        # --- promise-to-pay tracking (invoice_overdue / subscription_failure,
+        # SEND_MESSAGE only) — classifies, doesn't re-randomize, the outcome
+        # already resolved above, so it never contradicts the recovered-₹ math
+        promise = classify_promise(row, decision.action, agent_resolved, rng)
+
         records.append({
             "transaction_id": row["transaction_id"],
             "risk_type": row["risk_type"],
@@ -90,10 +99,13 @@ def simulate_batch(
             "recoverability_score": decision.recoverability_score,
             "agent_action": decision.action,
             "agent_channel": decision.channel,
+            "agent_retry_method": decision.retry_method,
             "agent_stopping_rule": decision.stopping_rule_triggered,
             "agent_systemic_issue": decision.systemic_issue_note,
             "agent_resolved": agent_resolved,
             "agent_recovered_amount": agent_recovered,
+            "promise_to_pay_status": promise.status,
+            "promise_to_pay_note": promise.note,
             "baseline_resolved": baseline_resolved,
             "baseline_recovered_amount": baseline_recovered,
             "baseline_compliance_violation": baseline_violation,
@@ -107,6 +119,8 @@ def summarize(results: pd.DataFrame) -> dict:
     agent_recovered = results["agent_recovered_amount"].sum()
     baseline_recovered = results["baseline_recovered_amount"].sum()
     violations = results["baseline_compliance_violation"].notna().sum()
+    promises_kept = int((results["promise_to_pay_status"] == "kept").sum())
+    promises_broken = int((results["promise_to_pay_status"] == "broken").sum())
 
     return {
         "total_at_risk": total_at_risk,
@@ -117,5 +131,7 @@ def summarize(results: pd.DataFrame) -> dict:
         "agent_recovery_rate": agent_recovered / total_at_risk * 100 if total_at_risk > 0 else 0.0,
         "baseline_recovery_rate": baseline_recovered / total_at_risk * 100 if total_at_risk > 0 else 0.0,
         "baseline_compliance_violations_avoided": int(violations),
+        "promises_kept": promises_kept,
+        "promises_broken": promises_broken,
         "n_transactions": len(results),
     }
