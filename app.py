@@ -137,7 +137,7 @@ with left:
         yaxis=dict(title="", gridcolor=GRID),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 with right:
     st.subheader("What the agent decided")
@@ -155,7 +155,7 @@ with right:
         yaxis=dict(gridcolor=GRID),
         showlegend=False,
     )
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
 st.divider()
 
@@ -179,7 +179,7 @@ st.dataframe(
         "transaction_id", "risk_type", "failure_reason", "amount", "customer_segment",
         "recoverability_score", "agent_action", "agent_channel", "agent_resolved", "agent_recovered_amount",
     ]].sort_values("recoverability_score", ascending=False),
-    use_container_width=True, height=280,
+    width="stretch", height=280,
 )
 
 st.divider()
@@ -229,6 +229,6 @@ if txn_id:
     st.markdown("**Full audit trail for this transaction:**")
     trail = audit.for_transaction(txn_id)
     if not trail.empty:
-        st.dataframe(trail[["timestamp", "action", "reasoning", "stopping_rule_triggered", "systemic_issue_note"]], use_container_width=True)
+        st.dataframe(trail[["timestamp", "action", "reasoning", "stopping_rule_triggered", "systemic_issue_note"]], width="stretch")
     else:
         st.caption("No audit entries found — re-run the batch to regenerate the log.")
