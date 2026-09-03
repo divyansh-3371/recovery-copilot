@@ -33,7 +33,7 @@ RISK_TYPE_WEIGHTS = [0.45, 0.25, 0.20, 0.10]
 FAILURE_REASONS = {
     "payment_failure": [
         "insufficient_funds", "bank_timeout", "card_expired",
-        "wrong_cvv", "network_drop", "issuer_declined",
+        "wrong_cvv", "network_drop", "issuer_declined", "risk_block",
     ],
     "checkout_abandonment": ["cart_abandoned_otp", "cart_abandoned_payment_page", "price_hesitation"],
     "subscription_failure": ["mandate_expired", "mandate_insufficient_funds", "mandate_bank_error"],
@@ -63,6 +63,7 @@ def _recoverability_prior(row: pd.Series) -> float:
     reason_adj = {
         "insufficient_funds": -0.10, "bank_timeout": +0.15, "card_expired": -0.20,
         "wrong_cvv": +0.20, "network_drop": +0.20, "issuer_declined": -0.05,
+        "risk_block": -0.35,
         "cart_abandoned_otp": +0.10, "cart_abandoned_payment_page": +0.05, "price_hesitation": -0.15,
         "mandate_expired": -0.10, "mandate_insufficient_funds": -0.10, "mandate_bank_error": +0.15,
         "invoice_overdue_15d": +0.15, "invoice_overdue_30d": 0.0, "invoice_overdue_45plus": -0.20,
