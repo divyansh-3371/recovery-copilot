@@ -59,6 +59,17 @@ st.sidebar.markdown(
     "- Complete audit trail per transaction\n"
     "- Real recovery *execution*, not just detection"
 )
+st.sidebar.divider()
+st.sidebar.markdown(
+    "**Example directions covered:**\n"
+    "- Payment degradation → root cause → recovery action\n"
+    "- Checkout drop-off recovery\n"
+    "- Failed-subscription recovery\n"
+    "- B2B receivables chaser\n"
+    "- Mandate retry sequencer\n"
+    "- Hinglish voice recovery\n"
+    "- Promise-to-pay tracker"
+)
 
 df, results, summary, systemic_issues = get_run(int(seed))
 audit = AuditTrail()
@@ -84,7 +95,7 @@ if systemic_issues:
         )
 
 # ------------------------------------------------------------- KPI row -----
-k1, k2, k3, k4 = st.columns(4)
+k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Total revenue at risk", f"₹{summary['total_at_risk']:,.0f}", help="Sum of all at-risk transactions in this batch")
 k2.metric(
     "Recovered by agent", f"₹{summary['agent_recovered']:,.0f}",
@@ -97,6 +108,10 @@ k3.metric(
 k4.metric(
     "Compliance violations avoided", summary["baseline_compliance_violations_avoided"],
     help="Do-not-contact / max-attempt violations the naive baseline would have committed",
+)
+k5.metric(
+    "Promises kept / broken", f"{summary['promises_kept']} / {summary['promises_broken']}",
+    help="Promise-to-pay tracker: broken promises are auto-escalated to a human agent, not dropped",
 )
 
 st.divider()
@@ -177,7 +192,8 @@ if segment_filter:
 st.dataframe(
     view[[
         "transaction_id", "risk_type", "failure_reason", "amount", "customer_segment",
-        "recoverability_score", "agent_action", "agent_channel", "agent_resolved", "agent_recovered_amount",
+        "recoverability_score", "agent_action", "agent_channel", "agent_retry_method",
+        "promise_to_pay_status", "agent_resolved", "agent_recovered_amount",
     ]].sort_values("recoverability_score", ascending=False),
     width="stretch", height=280,
 )
@@ -207,9 +223,15 @@ if txn_id:
 
     with d2:
         st.markdown(f"**Agent decision:** `{decision.action}`" + (f" via `{decision.channel}`" if decision.channel else ""))
+        if decision.retry_method:
+            st.markdown(f"**Retry sequencer:** `{decision.retry_method}` method, in {decision.retry_delay_hours}h")
         st.markdown("**Reasoning:**")
         for r in decision.reasoning:
             st.markdown(f"- {r}")
+
+        if res_row["promise_to_pay_status"] in ("kept", "broken"):
+            icon = "✅" if res_row["promise_to_pay_status"] == "kept" else "🚨"
+            st.markdown(f"**Promise-to-pay tracker:** {icon} {res_row['promise_to_pay_note']}")
 
         if decision.action == "SEND_MESSAGE":
             msg = generate_message(row, decision)
