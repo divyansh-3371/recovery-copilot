@@ -1,0 +1,44 @@
+"""
+Mandate / payment retry sequencer.
+
+Rather than one blind retry, a failed payment or subscription mandate
+follows an explicit multi-step sequence: what to try, after how long, and
+with what fallback -- escalating in cost/intrusiveness only as earlier,
+cheaper steps fail. This is the track's "mandate retry sequencer" direction
+made an explicit, inspectable component rather than inline policy logic.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class RetryStep:
+    step: int
+    delay_hours: float
+    method: str  # "same" | "fallback" | "manual_link"
+    note: str
+
+
+# indexed by previous_attempts (0 = the failure that just happened, no retry yet)
+PAYMENT_RETRY_SEQUENCE: list[RetryStep] = [
+    RetryStep(1, 0.5, "same", "Immediate retry on the same method — covers transient bank/network blips."),
+    RetryStep(2, 6.0, "same", "Retry after 6h — covers a temporary insufficient-funds window."),
+    RetryStep(3, 24.0, "fallback", "Same method has now failed twice — switch to a fallback payment method."),
+]
+
+MANDATE_RETRY_SEQUENCE: list[RetryStep] = [
+    RetryStep(1, 2.0, "same", "Immediate mandate re-presentment."),
+    RetryStep(2, 24.0, "same", "Re-present after 24h, aligned to typical salary-credit cycles."),
+    RetryStep(3, 72.0, "manual_link", "Two silent re-presentments — send a manual re-authorization link instead."),
+]
+
+
+def next_step(previous_attempts: int, is_mandate: bool) -> RetryStep | None:
+    """The next step in the sequence given how many attempts have already
+    happened. Returns None once the sequence is exhausted (the policy's
+    max-attempts stopping rule should already have caught this first)."""
+    sequence = MANDATE_RETRY_SEQUENCE if is_mandate else PAYMENT_RETRY_SEQUENCE
+    if previous_attempts >= len(sequence):
+        return None
+    return sequence[previous_attempts]
