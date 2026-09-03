@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from agent.retry_sequencer import next_step as next_retry_step
 from agent.root_cause import SystemicIssue
 
 HIGH_SCORE = 0.60
@@ -28,6 +29,7 @@ MAX_ATTEMPTS = 3
 QUIET_HOURS = set(range(22, 24)) | set(range(0, 8))
 
 CARD_UPDATE_REASONS = {"card_expired", "wrong_cvv"}
+MANDATE_REASONS = {"mandate_expired", "mandate_insufficient_funds", "mandate_bank_error"}
 
 
 @dataclass
@@ -36,6 +38,7 @@ class Decision:
     action: str
     channel: str | None = None
     retry_delay_hours: float | None = None
+    retry_method: str | None = None
     scheduled_hour: int | None = None
     stopping_rule_triggered: str | None = None
     systemic_issue_note: str | None = None
@@ -92,11 +95,34 @@ def decide(row: pd.Series, score: float, systemic_issues: dict[tuple[str, str], 
         d.channel = _choose_channel(row, score)
         d.reasoning.append(f"Failure reason '{row['failure_reason']}' needs the customer to act — retrying blindly would fail again.")
 
+    # --- mandate retry sequencer: subscription/mandate failures follow an
+    # explicit multi-step sequence rather than a single blind re-presentment
+    elif score >= HIGH_SCORE and row["risk_type"] == "subscription_failure" and row["failure_reason"] in MANDATE_REASONS:
+        step = next_retry_step(row["previous_attempts"], is_mandate=True)
+        if step is None:
+            d.stopping_rule_triggered = "retry_sequence_exhausted"
+            d.reasoning.append("Mandate retry sequence exhausted with no success — stopping rather than retrying indefinitely.")
+            return d
+        if step.method == "manual_link":
+            d.action = "SEND_MESSAGE"
+            d.channel = _choose_channel(row, score)
+        else:
+            d.action = "RETRY_PAYMENT"
+            d.retry_delay_hours = step.delay_hours
+            d.retry_method = step.method
+        d.reasoning.append(f"Mandate retry sequencer, step {step.step}: {step.note}")
+
     # --- score-driven routing ------------------------------------------------
     elif score >= HIGH_SCORE and row["risk_type"] == "payment_failure":
+        step = next_retry_step(row["previous_attempts"], is_mandate=False)
+        if step is None:
+            d.stopping_rule_triggered = "retry_sequence_exhausted"
+            d.reasoning.append("Payment retry sequence exhausted with no success — stopping rather than retrying indefinitely.")
+            return d
         d.action = "RETRY_PAYMENT"
-        d.retry_delay_hours = 0.5 if row["failure_reason"] in ("bank_timeout", "network_drop") else 6.0
-        d.reasoning.append(f"High recoverability score ({score:.2f}); auto-retrying in {d.retry_delay_hours}h.")
+        d.retry_delay_hours = step.delay_hours
+        d.retry_method = step.method
+        d.reasoning.append(f"Retry sequencer, step {step.step}: {step.note}")
 
     elif score >= HIGH_SCORE or (LOW_SCORE <= score < HIGH_SCORE):
         d.action = "SEND_MESSAGE"
