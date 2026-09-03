@@ -64,6 +64,41 @@ data/generate_data.py  →  synthetic batch of at-risk revenue events
 
 See `pitch/architecture.md` for the fuller write-up.
 
+## Gaps found on a code-level re-review, and how each was closed
+
+A later pass re-checked the actual code (not the intended design) against
+five specific criteria: a config-driven failure taxonomy, time-aware retry
+logic, guardrails, audit-trail completeness, and the proof layer's cost
+accounting. Two were solid as-is; three had real gaps, closed additively
+(nothing removed, see `pitch/build_challenges.md` #10 for the full log):
+
+- **Failure taxonomy was hardcoded, not a config table** — `agent/decision_table.py`
+  is now the single source of truth (category, blind-retry-effectiveness,
+  mandate flag, tuned first-retry delay) that `policy.py`, `retry_sequencer.py`,
+  and `simulator.py` all read from, instead of three separately-hardcoded,
+  drifting sets. Also added the missing **`risk_block`** failure reason
+  (a risk/fraud-engine decline) — routed to `ESCALATE_HUMAN` only, **never**
+  auto-retried or messaged, since retrying past a risk block is itself a
+  compliance risk.
+- **Retry timing lost failure-reason granularity in an earlier refactor** —
+  restored: a transient infra blip (bank timeout) retries in 30 minutes: an
+  insufficient-funds failure waits 24h for a balance/salary cycle, pulled
+  from the same decision table.
+- **Idempotency/cancellation was missing** — `agent/workflow.py` now checks,
+  *before* deciding each day's action, whether the customer already paid
+  through a channel the agent never touched, and if so cancels all
+  remaining scheduled actions with an explicit `IDEMPOTENT_CANCEL` audit
+  entry, rather than continuing to retry/message someone who's already paid.
+- **Audit trail didn't log `failure_reason` or outcome** — both decision-time
+  and outcome-time entries now carry `failure_reason`, and every decision
+  gets a follow-up `OUTCOME_RESOLVED`/`OUTCOME_UNRESOLVED` entry once its
+  result is known.
+- **Cost of intervention was missing from the proof layer** — `agent/cost_model.py`
+  estimates a per-action cost (SMS vs. voice vs. a human agent's time vs. a
+  gateway retry); the dashboard and `summarize()` now report **net**
+  recovered (gross minus cost) for both the agent and the baseline, not
+  just gross ₹.
+
 ## Beyond the single-pass MVP
 
 Four additions push this past a one-shot demo toward something that argues
@@ -147,22 +182,24 @@ This is a buildathon MVP, built honestly:
 data/generate_data.py     synthetic batch generator (+ injected outage)
 agent/features.py         shared feature engineering
 agent/classifier.py       recoverability model (train + explain)
+agent/decision_table.py   single-source-of-truth failure-reason -> category/retry/cost mapping
 agent/root_cause.py       portfolio-level degradation detector
-agent/retry_sequencer.py  explicit mandate/payment retry sequence
+agent/retry_sequencer.py  explicit mandate/payment retry sequence (reason-tuned first step)
 agent/promise_tracker.py  promise-to-pay classification
+agent/cost_model.py       estimated cost per intervention action
 agent/policy.py           decision engine + stopping rules
 agent/messenger.py        message generation (LLM + template) + offline TTS
 agent/razorpay_client.py  action -> Razorpay API call stub mapping
 agent/audit.py            append-only audit trail
-agent/simulator.py        outcome simulation + baseline comparison
+agent/simulator.py        outcome simulation + baseline comparison + net-recovered math
 agent/state_store.py      SQLite persistence for the multi-day workflow
-agent/workflow.py         multi-day stateful workflow orchestrator
+agent/workflow.py         multi-day stateful workflow orchestrator + idempotency guardrail
 agent/pipeline.py         single-pass orchestrator
 run_batch.py              CLI: single-pass batch run
 simulate_workflow.py      CLI: multi-day workflow simulation
 app.py                    Streamlit dashboard
 api.py                    FastAPI service (/decide, /batch/demo)
-tests/                    pytest suite (32 tests)
+tests/                    pytest suite (75 tests)
 .github/workflows/        CI: runs the test suite on every push
 pitch/                    architecture doc, pitch script, build-challenges log
 ```

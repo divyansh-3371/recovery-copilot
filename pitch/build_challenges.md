@@ -121,7 +121,43 @@ collision before the allowlist check even runs, which is arguably a
 stronger guarantee. Updated the test to assert the real (safe) behavior
 instead of the assumed one, and documented why in its docstring.
 
-## 10. `@app.on_event("startup")` is deprecated in the installed FastAPI
+## 10. A code-level re-review found real gaps behind claims that sounded complete
+
+**Problem:** the README described the failure-reason handling, retry timing,
+guardrails, audit trail, and proof layer as done. A line-by-line re-review
+of the actual code against five specific criteria found this was only
+partly true:
+- The failure-reason -> intervention mapping was hardcoded if/elif in
+  `policy.py`, duplicated as a *separate* hardcoded tuple in `simulator.py`
+  (`RETRY_FRIENDLY_REASONS`) -- two sources of the same truth, one edit away
+  from silently drifting apart.
+- A refactor two sessions earlier (extracting `retry_sequencer.py`) had
+  quietly **dropped** failure-reason-specific retry timing that used to
+  exist inline (`0.5h for bank_timeout/network_drop, else 6h`) -- replaced
+  with a single attempt-number-only sequence, a real regression nobody had
+  caught because there was no test pinning the old behavior down.
+- "Risk-engine block" wasn't in the failure taxonomy at all.
+- Idempotency (cancelling remaining actions when a customer pays through a
+  channel the agent never touched) was never implemented -- only ever
+  claimed as an emergent property of "skip if resolved," which doesn't
+  cover payment happening *outside* the agent's own actions.
+- The audit trail never logged `failure_reason` or the outcome of a
+  decision, only the decision itself.
+- The proof layer reported gross ₹ recovered but never the cost of
+  getting there.
+
+**Fix:** `agent/decision_table.py` consolidates the failure-reason judgment
+calls into one place; `agent/retry_sequencer.py` now takes an optional
+`failure_reason` to restore the lost timing distinction; `risk_block` was
+added to the taxonomy and routed to mandatory human review; `agent/workflow.py`
+gained an explicit pre-decision independent-payment check; `pipeline.py`/
+`workflow.py` log `failure_reason` and a follow-up outcome entry per
+decision; `agent/cost_model.py` + updated `summarize()` report net recovered
+after cost. 19 new tests pin all of this down so it can't silently regress
+again. Lesson: a claim of "done" needs to be checked against the actual
+diff, not the intent behind the commit message.
+
+## 11. `@app.on_event("startup")` is deprecated in the installed FastAPI
 
 **Problem:** running the test suite with `-W error::DeprecationWarning`
 turned up a `DeprecationWarning` on `@app.on_event("startup")` -- the
