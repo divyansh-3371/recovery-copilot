@@ -106,3 +106,28 @@ anchor (`text=Transaction queue`) instead of a selector that could match a
 hidden element first. General lesson for this project: prefer waiting on
 content known to be visible over a generic selector that might match
 inside a collapsed/hidden container.
+
+## 9. A test wrote a SQL-injection-style attack that failed for the wrong reason
+
+**Problem:** a test tried to prove `update_state()` refuses to let an
+attacker-controlled `**fields` dict overwrite `transaction_id`. It failed
+with `TypeError: got multiple values for argument 'transaction_id'` instead
+of the expected `ValueError` from the column allowlist.
+
+**Fix:** the test's assumption was wrong, not the code -- `transaction_id`
+is a named parameter of `update_state()` itself, so it can never reach
+`**fields` in the first place; Python's own call-binding rejects the
+collision before the allowlist check even runs, which is arguably a
+stronger guarantee. Updated the test to assert the real (safe) behavior
+instead of the assumed one, and documented why in its docstring.
+
+## 10. `@app.on_event("startup")` is deprecated in the installed FastAPI
+
+**Problem:** running the test suite with `-W error::DeprecationWarning`
+turned up a `DeprecationWarning` on `@app.on_event("startup")` -- the
+installed FastAPI version has moved to `lifespan` context managers.
+
+**Fix:** replaced it with an `@asynccontextmanager` `lifespan` function
+passed to `FastAPI(..., lifespan=lifespan)`, and re-verified the startup
+warning (API_KEY unset -> "open demo mode" log) still fires against a real
+running server, not just that the app still imports.

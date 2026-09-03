@@ -86,7 +86,11 @@ for itself as production-minded:
   tests; CI runs them on every push.
 - **`api.py`** — the same pipeline exposed as a FastAPI service
   (`/decide`, `/batch/demo`), so it's callable from a real backend, not only
-  runnable as a CLI or a Streamlit demo.
+  runnable as a CLI or a Streamlit demo. Hardened, not just functional:
+  rate limiting, SQL-injection-defended state persistence, strict input
+  validation, bounded batch size, opt-in API-key auth, and no internal
+  detail leaked on error — every control verified against a live server,
+  not just asserted. See `pitch/security.md` for the full rundown.
 
 ## Tech stack
 
