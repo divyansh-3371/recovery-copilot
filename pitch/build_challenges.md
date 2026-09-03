@@ -193,3 +193,25 @@ audience-appropriate page rather than reusing the technical one. Lesson:
 a chart form being the textbook-correct choice doesn't guarantee a real
 viewer reads it correctly -- watch someone actually look at it before
 calling a visualization done.
+
+## 13. The dashboard recomputed live but never proved it was doing so
+
+**Problem:** the seed control and day-slider already triggered real
+recomputation on every change, but nothing on screen made that visible --
+from a viewer's side, static pre-baked charts and genuinely-live-but-
+identical-looking charts render identically until you already know the
+mechanism. The complaint was fair: it read as "a static website," even
+though the underlying computation was real.
+
+**Fix:** added a "Try it live" tab where the viewer directly controls the
+model/policy inputs (amount, failure reason, payment method, attempts...)
+via ordinary widgets, and the score/decision/reasoning/cost/Razorpay-call
+recompute on every change with no submit button -- Streamlit's own rerun
+model makes this free once the inputs are wired to the same `classifier`/
+`policy`/`cost_model` calls the rest of the app uses. Verified end-to-end,
+not just written: dropped the amount from ₹5,000 to ₹60 in a live browser
+and confirmed the decision actually flipped from "sent a nudge" to "left
+alone, not worth pursuing" with the ₹150-floor reasoning updating to match,
+plus a visible recompute timestamp in the sidebar. Also added a "Randomize
+batch" button so the seed control's effect is a one-click, obvious gesture
+instead of something you have to already understand to notice.

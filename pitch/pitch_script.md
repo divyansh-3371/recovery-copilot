@@ -24,9 +24,17 @@ Timing is a guide, not a script to read verbatim — say it in your own words.
 
 ## 1:10–3:00 — Live demo (dashboard walkthrough)
 
-The dashboard is four tabs — Overview, Multi-day workflow, Investigate,
-Merchant view — each answering a different question a real viewer would ask.
+The dashboard is five tabs — Try it live, Overview, Multi-day workflow,
+Investigate, Merchant view — each answering a different question a real
+viewer would ask.
 
+0. **Try it live tab, first — prove it's not a canned demo.** Change the
+   amount field from something mid-size down to ₹60 on camera:
+   *"This isn't pre-computed — watch the decision itself change."* Point at
+   it flipping from a nudge to "left alone, not worth pursuing" and the
+   reasoning updating to cite the ₹150 recovery-cost floor, live, with a
+   visible recompute timestamp. *"Same classifier, same policy engine, same
+   Razorpay-call mapping running on whatever I type — not a fixed report."*
 1. **Overview tab.** Point at the **consolidated systemic-issue card** first:
    *"The agent just caught a netbanking outage on its own — 37x the normal
    bank-timeout rate — and paused customer-facing retries for it instead of

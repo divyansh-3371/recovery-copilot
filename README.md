@@ -7,6 +7,11 @@ subscription/mandate failures, overdue B2B invoices), decides the right
 *bounded* intervention, and executes it — with measured recovered ₹, a
 compliant stopping-rules policy, and a complete audit trail.
 
+The dashboard's **"Try it live" tab** lets you feed the agent your own
+transaction (amount, failure reason, payment method, attempts...) and
+watch the score, decision, reasoning, cost, and Razorpay-call mapping
+recompute in real time — nothing on this dashboard is pre-baked.
+
 ## The Bar this project targets
 
 | Requirement | Where it's satisfied |
