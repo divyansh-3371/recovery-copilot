@@ -19,6 +19,8 @@ from agent.classifier import train_default_model
 from agent.messenger import generate_message, synthesize_voice
 from agent.pipeline import run_pipeline
 from agent.policy import decide
+from agent.razorpay_client import build_call
+from agent.workflow import run_workflow
 from data.generate_data import generate
 
 # --- palette (dataviz skill reference palette, light mode) ------------------
@@ -44,6 +46,17 @@ def get_run(seed: int):
     model = get_model()
     results, summary, _, systemic_issues = run_pipeline(df, model=model)
     return df, results, summary, systemic_issues
+
+
+@st.cache_data(show_spinner="Simulating the multi-day recovery workflow...")
+def get_workflow(seed: int, n_days: int):
+    df = generate(seed=seed)
+    model = get_model()
+    return run_workflow(
+        df, model, n_days=n_days,
+        db_path=f"data/workflow_state_{seed}.db",
+        audit_path=f"data/workflow_audit_log_{seed}.jsonl",
+    )
 
 
 # ---------------------------------------------------------------- sidebar ---
@@ -174,6 +187,46 @@ with right:
 
 st.divider()
 
+# ------------------------------------------------- multi-day workflow ------
+st.subheader("Multi-day workflow simulation")
+st.caption(
+    "Everything above is one stateless pass. This runs the same batch through "
+    "the classifier + policy + simulator stack across several simulated days, "
+    "persisting each transaction's state — so the retry sequencer actually "
+    "advances step by step and a promise-to-pay deadline actually arrives and "
+    "gets checked, instead of every run starting from attempt zero."
+)
+n_days = st.slider("Simulated days", min_value=2, max_value=10, value=5)
+daily = get_workflow(int(seed), n_days)
+
+wf_fig = go.Figure()
+wf_fig.add_trace(go.Scatter(
+    x=daily["day"], y=daily["cumulative_recovered"], mode="lines+markers",
+    line=dict(color=BLUE, width=2), marker=dict(color=BLUE, size=9),
+    hovertemplate="Day %{x}: ₹%{y:,.0f} recovered so far<extra></extra>",
+))
+wf_fig.update_layout(
+    height=280, margin=dict(l=10, r=10, t=10, b=10),
+    plot_bgcolor="#fcfcfb", paper_bgcolor="#fcfcfb",
+    font=dict(color=INK_PRIMARY),
+    xaxis=dict(title="Simulated day", gridcolor=GRID, zeroline=False, dtick=1),
+    yaxis=dict(title="Cumulative ₹ recovered", gridcolor=GRID),
+    showlegend=False,
+)
+st.plotly_chart(wf_fig, width="stretch")
+
+last_day = daily.iloc[-1]
+st.caption(
+    f"By day {int(last_day['day'])}: **{int(last_day['cumulative_resolved'])}** of "
+    f"{len(df)} transactions resolved, **₹{last_day['cumulative_recovered']:,.0f}** recovered — "
+    f"note this exceeds the single-pass total above, because the workflow gets multiple "
+    f"scheduled chances (retry steps, promise deadlines) that a one-shot decision doesn't."
+)
+with st.expander("Day-by-day detail"):
+    st.dataframe(daily, width="stretch")
+
+st.divider()
+
 # ------------------------------------------------------- transaction table -
 st.subheader("Transaction queue")
 f1, f2, f3 = st.columns(3)
@@ -247,6 +300,13 @@ if txn_id:
                                 st.audio(f.read(), format="audio/wav")
                         else:
                             st.warning("Offline TTS engine not available in this environment — message text shown above.")
+
+        razorpay_call = build_call(row, decision)
+        if razorpay_call is not None:
+            with st.expander("Razorpay API call this would trigger"):
+                st.code(f"{razorpay_call.method} {razorpay_call.path}", language="text")
+                st.json(razorpay_call.payload)
+                st.caption(razorpay_call.note)
 
     st.markdown("**Full audit trail for this transaction:**")
     trail = audit.for_transaction(txn_id)

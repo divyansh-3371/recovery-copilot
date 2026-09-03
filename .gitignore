@@ -6,4 +6,9 @@ venv/
 data/transactions.csv
 data/results.csv
 data/audit_log.jsonl
+data/workflow_state*.db
+data/workflow_audit_log*.jsonl
+data/workflow_daily_summary.csv
+__pycache__
+*.egg-info
 .streamlit/secrets.toml
