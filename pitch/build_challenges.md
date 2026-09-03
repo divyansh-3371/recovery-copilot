@@ -167,3 +167,29 @@ installed FastAPI version has moved to `lifespan` context managers.
 passed to `FastAPI(..., lifespan=lifespan)`, and re-verified the startup
 warning (API_KEY unset -> "open demo mode" log) still fires against a real
 running server, not just that the app still imports.
+
+## 12. A textbook-correct chart form still failed real-user comprehension
+
+**Problem:** the baseline-vs-agent comparison used a dumbbell chart (two
+dots per category connected by a line) -- the standard, correct form for
+"before vs after per item" per data-viz guidance. A person looking at the
+actual dashboard read it as "just an image and sliders" and had no idea
+what it showed. Same critique landed on the three separate systemic-issue
+banners (repetitive, no hierarchy) and the sidebar's judge-facing checklist
+("The Bar this demo targets" / "Example directions covered") -- content
+useful to a reviewer of the code, not to anyone looking at the running app.
+
+**Fix:** replaced the dumbbell with a grouped bar chart (the same "compare
+two series per category" job, but a form nobody misreads); consolidated
+the three banners into one card with compact bullet lines; moved the
+judge-facing checklist into a collapsed sidebar expander instead of
+always-on screen real estate; split the single long-scroll page into four
+tabs (Overview / Multi-day workflow / Investigate / Merchant view) so each
+answers one question instead of dumping everything at once; added a
+genuinely new interactive element (click a bar in "what the agent decided"
+to see a real example transaction, verified working via a real Playwright
+click, not just code review); and added the merchant-view tab as its own
+audience-appropriate page rather than reusing the technical one. Lesson:
+a chart form being the textbook-correct choice doesn't guarantee a real
+viewer reads it correctly -- watch someone actually look at it before
+calling a visualization done.

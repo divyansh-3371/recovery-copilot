@@ -24,22 +24,30 @@ Timing is a guide, not a script to read verbatim — say it in your own words.
 
 ## 1:10–3:00 — Live demo (dashboard walkthrough)
 
-1. Open the dashboard. Point at the **systemic issue banner** first:
-   *"The agent just caught a netbanking outage on its own — 28x the normal
+The dashboard is four tabs — Overview, Multi-day workflow, Investigate,
+Merchant view — each answering a different question a real viewer would ask.
+
+1. **Overview tab.** Point at the **consolidated systemic-issue card** first:
+   *"The agent just caught a netbanking outage on its own — 37x the normal
    bank-timeout rate — and paused customer-facing retries for it instead of
    spamming people during an outage that isn't their fault."*
-2. **KPI row:** *"₹X at risk this batch, the agent recovered ₹Y — that's Z%
-   more than a naive single-retry baseline on the identical transactions,
-   and it avoided N compliance violations the baseline would have
-   committed — contacting do-not-contact customers, exceeding attempt
-   caps."*
-3. **Dumbbell chart:** *"Here's recovered revenue broken out by risk type —
+2. **KPI cards:** *"₹X at risk this batch, the agent recovered ₹Y gross —
+   and after accounting for the actual cost of each intervention, ₹Z net —
+   that's N% more than a naive single-retry baseline on the identical
+   transactions, and it avoided M compliance violations the baseline would
+   have committed."*
+3. **Grouped bar chart:** *"Here's recovered revenue broken out by category —
    payment failures, checkout abandonment, subscription failures, overdue
    invoices — baseline vs Recovery Copilot, side by side."*
-4. **Action bar:** *"This is what the agent actually did — not just
-   'flagged as risky,' but the concrete action: auto-retry, personalized
-   message, human escalation, ops escalation, or a compliant stop."*
-5. **Drill into one transaction:** pick one with a `SEND_MESSAGE` action.
+4. **Action chart — click a bar:** *"This is what the agent actually did —
+   not just 'flagged as risky,' a concrete action. And it's not static —"*
+   click any bar *"— clicking one shows a real example transaction that got
+   that decision."*
+5. **Merchant view tab:** *"And this is what the actual merchant using this
+   would see — not the technical detail, just: how much did I get back,
+   what's still in progress, what are my top failure reasons right now.
+   Different audience, different view, same underlying agent."*
+6. **Investigate tab — drill into one transaction:** pick one with a `SEND_MESSAGE` action.
    *"Here's the recoverability score and exactly why — the top factors that
    pushed it up or down. Here's the agent's reasoning for the action it
    chose. Here's the actual message it generated. And here's the full audit
@@ -59,14 +67,14 @@ Timing is a guide, not a script to read verbatim — say it in your own words.
    *"And this isn't operating in the abstract — here's the actual Razorpay
    API call this decision would make in production."*
 
-5b. **Multi-day workflow section:** *"Everything so far was one pass. This
-    runs the same batch through the agent across several simulated days,
-    with state actually persisting between them — so the retry sequencer
-    genuinely advances step by step, and a promise-to-pay deadline
-    genuinely arrives and gets checked, instead of every run starting from
-    attempt zero. And it recovers even more than the single pass did,
-    because a real workflow gets multiple scheduled chances."*
-6. **If you have a `voice_hinglish` transaction:** click play. *"For
+7. **Multi-day workflow tab:** *"Everything so far was one pass. This
+   runs the same batch through the agent across several simulated days,
+   with state actually persisting between them — so the retry sequencer
+   genuinely advances step by step, and a promise-to-pay deadline
+   genuinely arrives and gets checked, instead of every run starting from
+   attempt zero. And it recovers even more than the single pass did,
+   because a real workflow gets multiple scheduled chances."*
+8. **If you have a `voice_hinglish` transaction:** click play. *"For
    returning customers who've already missed one attempt, the agent
    switches to a Hinglish voice nudge — synthesized fully offline, no
    internet dependency."*
