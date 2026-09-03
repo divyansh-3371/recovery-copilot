@@ -81,3 +81,20 @@ def test_every_decision_carries_reasoning():
     row = make_row()
     d = decide(row, score=0.5, systemic_issues={})
     assert len(d.reasoning) > 0
+
+
+def test_risk_block_never_auto_retried_or_messaged():
+    """A risk/fraud-engine block must always go to human review -- never a
+    blind retry (looks like fraud evasion) and never a customer message
+    (the customer isn't the one who can fix a risk-engine decision)."""
+    row = make_row(failure_reason="risk_block", risk_type="payment_failure")
+    d = decide(row, score=0.9, systemic_issues={})
+    assert d.action == "ESCALATE_HUMAN"
+    assert d.channel is None
+
+
+def test_risk_block_still_respects_stopping_rules_first():
+    row = make_row(failure_reason="risk_block", risk_type="payment_failure", do_not_contact=True)
+    d = decide(row, score=0.9, systemic_issues={})
+    assert d.action == "STOP"
+    assert d.stopping_rule_triggered == "do_not_contact"

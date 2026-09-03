@@ -34,3 +34,27 @@ def test_cumulative_recovery_is_monotonically_non_decreasing(tmp_path):
     daily = run_workflow(df, model, n_days=5, db_path=str(tmp_path / "state.db"), audit_path=str(tmp_path / "audit.jsonl"))
     diffs = daily["cumulative_recovered"].diff().dropna()
     assert (diffs >= 0).all()
+
+
+def test_idempotent_cancellation_fires_and_is_audited(tmp_path):
+    """Guardrail: a customer paying independently, through a channel the
+    agent never touched, must be detected and logged -- not silently
+    missed, and not left to keep getting retried/messaged afterward."""
+    df = generate(n=150, seed=7)
+    model = _tiny_model()
+    db_path = str(tmp_path / "state.db")
+    audit_path = str(tmp_path / "audit.jsonl")
+
+    run_workflow(df, model, n_days=6, db_path=db_path, audit_path=audit_path)
+
+    from agent.audit import AuditTrail
+    trail = AuditTrail(path=audit_path).load_all()
+    cancels = trail[trail["action"] == "IDEMPOTENT_CANCEL"]
+    assert len(cancels) > 0  # with 150 transactions over 6 days, at least one should fire
+
+    # once cancelled, that transaction must be resolved and never acted on again
+    from agent.state_store import connect
+    with connect(db_path) as conn:
+        for txn_id in cancels["transaction_id"].unique():
+            cur = conn.execute("SELECT resolved FROM transaction_state WHERE transaction_id = ?", (txn_id,))
+            assert cur.fetchone()["resolved"] == 1
