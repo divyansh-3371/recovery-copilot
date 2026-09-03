@@ -26,13 +26,40 @@ from data.generate_data import generate
 # --- palette (dataviz skill reference palette, light mode) ------------------
 BLUE = "#2a78d6"
 BLUE_LIGHT = "#6da7ec"
+ORANGE = "#eb6834"
 INK_PRIMARY = "#0b0b0b"
 INK_SECONDARY = "#52514e"
 INK_MUTED = "#898781"
 GRID = "#e1e0d9"
 STATUS_CRITICAL = "#d03b3b"
+STATUS_GOOD = "#0ca30c"
+SURFACE = "#fcfcfb"
+
+# human-readable labels -- the raw action/status codes (SEND_MESSAGE,
+# ESCALATE_OPS...) are what the code calls them, not what a person reads
+ACTION_LABEL = {
+    "SEND_MESSAGE": "Sent a nudge",
+    "RETRY_PAYMENT": "Retried the payment",
+    "ESCALATE_HUMAN": "Escalated to a human agent",
+    "ESCALATE_OPS": "Flagged to ops (system issue)",
+    "STOP": "Left alone (not worth pursuing)",
+}
+RISK_TYPE_LABEL = {
+    "payment_failure": "Payment failures",
+    "checkout_abandonment": "Checkout drop-offs",
+    "subscription_failure": "Subscription failures",
+    "invoice_overdue": "Overdue invoices",
+}
 
 st.set_page_config(page_title="Recovery Copilot", page_icon="\U0001F4B8", layout="wide")
+
+st.markdown(
+    """<style>
+    div[data-testid="stMetric"] { background: #f9f9f7; border: 1px solid #e1e0d9; border-radius: 8px; padding: 12px 14px; }
+    div[data-testid="stMetricValue"] { font-size: 1.5rem; }
+    </style>""",
+    unsafe_allow_html=True,
+)
 
 
 @st.cache_resource(show_spinner="Training recoverability model on simulated historical data...")
@@ -60,29 +87,22 @@ def get_workflow(seed: int, n_days: int):
 
 
 # ---------------------------------------------------------------- sidebar ---
-st.sidebar.title("Recovery Copilot")
+st.sidebar.title("\U0001F4B8 Recovery Copilot")
 st.sidebar.caption("AI Revenue Recovery agent — Razorpay AI Buildathon")
 seed = st.sidebar.number_input("Batch seed", min_value=1, max_value=9999, value=42, step=1)
 st.sidebar.caption("Change the seed to run the agent fresh on a new synthetic batch of at-risk transactions.")
-st.sidebar.divider()
-st.sidebar.markdown(
-    "**The Bar this demo targets:**\n"
-    "- Measured ₹ recovered vs a naive baseline\n"
-    "- Compliant escalation with stopping rules\n"
-    "- Complete audit trail per transaction\n"
-    "- Real recovery *execution*, not just detection"
-)
-st.sidebar.divider()
-st.sidebar.markdown(
-    "**Example directions covered:**\n"
-    "- Payment degradation → root cause → recovery action\n"
-    "- Checkout drop-off recovery\n"
-    "- Failed-subscription recovery\n"
-    "- B2B receivables chaser\n"
-    "- Mandate retry sequencer\n"
-    "- Hinglish voice recovery\n"
-    "- Promise-to-pay tracker"
-)
+with st.sidebar.expander("What is this agent doing? (for reviewers)"):
+    st.markdown(
+        "**Targets Razorpay's own bar for this track:**\n"
+        "- Measured ₹ recovered vs a naive baseline\n"
+        "- Compliant escalation with stopping rules\n"
+        "- Complete audit trail per transaction\n"
+        "- Real recovery *execution*, not just detection\n\n"
+        "**Covers every named example direction:** payment root-cause "
+        "analysis, checkout drop-off recovery, failed-subscription recovery, "
+        "B2B receivables chasing, a mandate retry sequencer, Hinglish voice "
+        "recovery, and a promise-to-pay tracker."
+    )
 
 df, results, summary, systemic_issues = get_run(int(seed))
 audit = AuditTrail()
@@ -95,231 +115,310 @@ st.caption(
     "audit trail and compliance stopping rules."
 )
 
-# --------------------------------------------------------- systemic banner --
-if systemic_issues:
-    for issue in systemic_issues.values():
-        st.markdown(
-            f"""<div style="border-left:4px solid {STATUS_CRITICAL}; background:#fdf1f0;
-            padding:10px 14px; border-radius:4px; margin-bottom:10px;">
-            <span style="color:{STATUS_CRITICAL}; font-weight:600;">⚠ Systemic issue detected — root-cause analyzer</span><br/>
-            <span style="color:{INK_PRIMARY};">{issue.note}</span>
-            </div>""",
-            unsafe_allow_html=True,
+tab_overview, tab_workflow, tab_investigate, tab_merchant = st.tabs(
+    ["\U0001F4CA Overview", "\U0001F5D3️ Multi-day workflow", "\U0001F50D Investigate", "\U0001F3EA Merchant view"]
+)
+
+# =============================================================== OVERVIEW ===
+with tab_overview:
+    # --------------------------------------------------- systemic issues ----
+    with st.container(border=True):
+        if systemic_issues:
+            st.markdown(f"#### ⚠️ {len(systemic_issues)} systemic issue(s) detected right now")
+            st.caption("The agent is pausing customer-facing retries for these — the problem is on the bank/gateway side, not the customer's.")
+            for issue in systemic_issues.values():
+                st.markdown(
+                    f"- **{issue.payment_method.upper()} · {issue.failure_reason.replace('_', ' ')}** — "
+                    f"**{issue.ratio:.1f}x** its normal rate ({issue.recent_count} in the last day). "
+                    f"Retries paused, ops alerted."
+                )
+        else:
+            st.markdown("#### ✅ No systemic issues detected")
+            st.caption("All failure patterns are within their normal range this batch.")
+
+    st.write("")
+
+    # ------------------------------------------------------------ KPIs -----
+    with st.container(border=True):
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Total revenue at risk", f"₹{summary['total_at_risk']:,.0f}", help="Sum of all at-risk transactions in this batch")
+        k2.metric(
+            "Recovered (gross)", f"₹{summary['agent_recovered']:,.0f}",
+            delta=f"+₹{summary['uplift_amount']:,.0f} vs baseline",
+        )
+        k3.metric(
+            "Recovery rate", f"{summary['agent_recovery_rate']:.1f}%",
+            delta=f"+{summary['agent_recovery_rate'] - summary['baseline_recovery_rate']:.1f}pp vs baseline",
+        )
+        k4, k5, k6 = st.columns(3)
+        k4.metric(
+            "Net recovered (after cost)", f"₹{summary['agent_net_recovered']:,.0f}",
+            delta=f"+₹{summary['net_uplift_amount']:,.0f} vs baseline net",
+            help=f"Gross recovered minus intervention cost (₹{summary['agent_intervention_cost']:,.0f} spent) "
+                 f"— recovering more only counts if it didn't cost more than it was worth",
+        )
+        k5.metric(
+            "Compliance violations avoided", summary["baseline_compliance_violations_avoided"],
+            help="Do-not-contact / max-attempt violations the naive baseline would have committed",
+        )
+        k6.metric(
+            "Promises kept / broken", f"{summary['promises_kept']} / {summary['promises_broken']}",
+            help="Promise-to-pay tracker: broken promises are auto-escalated to a human agent, not dropped",
         )
 
-# ------------------------------------------------------------- KPI row -----
-k1, k2, k3 = st.columns(3)
-k1.metric("Total revenue at risk", f"₹{summary['total_at_risk']:,.0f}", help="Sum of all at-risk transactions in this batch")
-k2.metric(
-    "Recovered by agent (gross)", f"₹{summary['agent_recovered']:,.0f}",
-    delta=f"+₹{summary['uplift_amount']:,.0f} vs baseline",
-)
-k3.metric(
-    "Recovery rate", f"{summary['agent_recovery_rate']:.1f}%",
-    delta=f"+{summary['agent_recovery_rate'] - summary['baseline_recovery_rate']:.1f}pp vs baseline",
-)
+    st.write("")
 
-k4, k5, k6 = st.columns(3)
-k4.metric(
-    "Net recovered (after cost)", f"₹{summary['agent_net_recovered']:,.0f}",
-    delta=f"+₹{summary['net_uplift_amount']:,.0f} vs baseline net",
-    help=f"Gross recovered minus intervention cost (₹{summary['agent_intervention_cost']:,.0f} spent recovering it) "
-         f"— recovering more only counts if it didn't cost more than it was worth",
-)
-k5.metric(
-    "Compliance violations avoided", summary["baseline_compliance_violations_avoided"],
-    help="Do-not-contact / max-attempt violations the naive baseline would have committed",
-)
-k6.metric(
-    "Promises kept / broken", f"{summary['promises_kept']} / {summary['promises_broken']}",
-    help="Promise-to-pay tracker: broken promises are auto-escalated to a human agent, not dropped",
-)
-
-st.divider()
-
-# --------------------------------------------------- recovered: before/after
-left, right = st.columns([3, 2])
-
-with left:
-    st.subheader("Recovered revenue: baseline vs Recovery Copilot")
+    # ------------------------------------------------ recovered by category -
+    st.subheader("Recovered revenue by category: baseline vs Recovery Copilot")
     agg = (
         results.groupby("risk_type")[["baseline_recovered_amount", "agent_recovered_amount"]]
-        .sum()
-        .reset_index()
-        .sort_values("agent_recovered_amount")
+        .sum().reset_index()
     )
+    agg["risk_label"] = agg["risk_type"].map(RISK_TYPE_LABEL).fillna(agg["risk_type"])
+    agg = agg.sort_values("agent_recovered_amount")
+
     fig = go.Figure()
-    for _, r in agg.iterrows():
-        fig.add_trace(go.Scatter(
-            x=[r["baseline_recovered_amount"], r["agent_recovered_amount"]],
-            y=[r["risk_type"], r["risk_type"]],
-            mode="lines", line=dict(color=GRID, width=3), showlegend=False, hoverinfo="skip",
-        ))
-    fig.add_trace(go.Scatter(
-        x=agg["baseline_recovered_amount"], y=agg["risk_type"], mode="markers",
-        name="Baseline (before)", marker=dict(color=BLUE_LIGHT, size=13),
+    fig.add_trace(go.Bar(
+        y=agg["risk_label"], x=agg["baseline_recovered_amount"], orientation="h",
+        name="Baseline (before)", marker_color=BLUE_LIGHT,
         hovertemplate="Baseline: ₹%{x:,.0f}<extra></extra>",
     ))
-    fig.add_trace(go.Scatter(
-        x=agg["agent_recovered_amount"], y=agg["risk_type"], mode="markers",
-        name="Recovery Copilot (after)", marker=dict(color=BLUE, size=16),
+    fig.add_trace(go.Bar(
+        y=agg["risk_label"], x=agg["agent_recovered_amount"], orientation="h",
+        name="Recovery Copilot (after)", marker_color=BLUE,
         hovertemplate="Recovery Copilot: ₹%{x:,.0f}<extra></extra>",
     ))
     fig.update_layout(
-        height=320, margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="#fcfcfb", paper_bgcolor="#fcfcfb",
-        font=dict(color=INK_PRIMARY),
+        barmode="group", height=300, margin=dict(l=10, r=10, t=10, b=10),
+        plot_bgcolor=SURFACE, paper_bgcolor=SURFACE, font=dict(color=INK_PRIMARY),
         xaxis=dict(title="Recovered amount (₹)", gridcolor=GRID, zeroline=False),
-        yaxis=dict(title="", gridcolor=GRID),
+        yaxis=dict(title=""),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
     st.plotly_chart(fig, width="stretch")
 
-with right:
-    st.subheader("What the agent decided")
-    action_counts = results["agent_action"].value_counts().sort_values()
-    fig2 = px.bar(
-        x=action_counts.values, y=action_counts.index, orientation="h",
-        labels={"x": "Transactions", "y": ""},
-        color_discrete_sequence=[BLUE],
-    )
+    total_uplift_pct = summary["uplift_pct"]
+    if pd.notna(total_uplift_pct):
+        st.caption(f"Across all categories: **{total_uplift_pct:+.0f}%** more recovered than the naive baseline on the identical batch.")
+
+    st.write("")
+
+    # ------------------------------------------------------ what it decided -
+    st.subheader("What the agent decided, and why")
+    action_counts = results["agent_action"].value_counts()
+    action_labels = [ACTION_LABEL.get(a, a) for a in action_counts.index]
+
+    fig2 = go.Figure(go.Bar(
+        x=action_counts.values, y=action_labels, orientation="h",
+        marker_color=BLUE, customdata=action_counts.index,
+        hovertemplate="%{y}: %{x} transactions<extra></extra>",
+    ))
     fig2.update_layout(
-        height=320, margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="#fcfcfb", paper_bgcolor="#fcfcfb",
-        font=dict(color=INK_PRIMARY),
-        xaxis=dict(gridcolor=GRID, zeroline=False),
-        yaxis=dict(gridcolor=GRID),
+        height=280, margin=dict(l=10, r=10, t=10, b=10),
+        plot_bgcolor=SURFACE, paper_bgcolor=SURFACE, font=dict(color=INK_PRIMARY),
+        xaxis=dict(title="Transactions", gridcolor=GRID, zeroline=False),
+        yaxis=dict(title="", categoryorder="total ascending"),
+    )
+    event = st.plotly_chart(fig2, width="stretch", on_select="rerun", key="action_chart", selection_mode="points")
+
+    # click a bar to see a real example of that decision -- safe fallback if
+    # the selection payload's shape ever differs from what's expected here
+    clicked_action = None
+    try:
+        points = event["selection"]["points"] if event else []
+        if points:
+            clicked_action = points[0]["customdata"][0] if isinstance(points[0].get("customdata"), list) else points[0].get("customdata")
+    except Exception:
+        clicked_action = None
+
+    if clicked_action and clicked_action in results["agent_action"].values:
+        example = results[results["agent_action"] == clicked_action].iloc[0]
+        st.info(
+            f"**Example — {ACTION_LABEL.get(clicked_action, clicked_action)}:** "
+            f"transaction `{example['transaction_id']}`, a ₹{example['amount']:,.0f} "
+            f"{RISK_TYPE_LABEL.get(example['risk_type'], example['risk_type']).lower()} "
+            f"case ({example['failure_reason'].replace('_', ' ')}). "
+            f"See the **Investigate** tab to look up this transaction's full reasoning."
+        )
+    else:
+        st.caption("Click a bar above to see a real example of that decision.")
+
+# ============================================================== WORKFLOW ====
+with tab_workflow:
+    st.subheader("Multi-day workflow simulation")
+    st.caption(
+        "The Overview tab is one stateless pass. This runs the same batch through "
+        "the classifier + policy + simulator stack across several simulated days, "
+        "persisting each transaction's state — so the retry sequencer actually "
+        "advances step by step and a promise-to-pay deadline actually arrives and "
+        "gets checked, instead of every run starting from attempt zero."
+    )
+    n_days = st.slider("Simulated days", min_value=2, max_value=10, value=5)
+    daily = get_workflow(int(seed), n_days)
+
+    wf_fig = go.Figure()
+    wf_fig.add_trace(go.Scatter(
+        x=daily["day"], y=daily["cumulative_recovered"], mode="lines+markers",
+        line=dict(color=BLUE, width=2), marker=dict(color=BLUE, size=9),
+        fill="tozeroy", fillcolor="rgba(42,120,214,0.08)",
+        hovertemplate="Day %{x}: ₹%{y:,.0f} recovered so far<extra></extra>",
+    ))
+    wf_fig.update_layout(
+        height=300, margin=dict(l=10, r=10, t=10, b=10),
+        plot_bgcolor=SURFACE, paper_bgcolor=SURFACE, font=dict(color=INK_PRIMARY),
+        xaxis=dict(title="Simulated day", gridcolor=GRID, zeroline=False, dtick=1),
+        yaxis=dict(title="Cumulative ₹ recovered", gridcolor=GRID),
         showlegend=False,
     )
-    st.plotly_chart(fig2, width="stretch")
+    st.plotly_chart(wf_fig, width="stretch")
 
-st.divider()
+    last_day = daily.iloc[-1]
+    with st.container(border=True):
+        st.markdown(
+            f"By day **{int(last_day['day'])}**: **{int(last_day['cumulative_resolved'])}** of "
+            f"{len(df)} transactions resolved, **₹{last_day['cumulative_recovered']:,.0f}** recovered — "
+            f"more than the single-pass total on the Overview tab, because a real workflow gets "
+            f"multiple scheduled chances (retry steps, promise deadlines) a one-shot decision doesn't."
+        )
+    with st.expander("Day-by-day detail"):
+        st.dataframe(daily, width="stretch")
 
-# ------------------------------------------------- multi-day workflow ------
-st.subheader("Multi-day workflow simulation")
-st.caption(
-    "Everything above is one stateless pass. This runs the same batch through "
-    "the classifier + policy + simulator stack across several simulated days, "
-    "persisting each transaction's state — so the retry sequencer actually "
-    "advances step by step and a promise-to-pay deadline actually arrives and "
-    "gets checked, instead of every run starting from attempt zero."
-)
-n_days = st.slider("Simulated days", min_value=2, max_value=10, value=5)
-daily = get_workflow(int(seed), n_days)
+# ============================================================ INVESTIGATE ===
+with tab_investigate:
+    st.subheader("Transaction queue")
+    f1, f2, f3 = st.columns(3)
+    risk_filter = f1.multiselect("Risk type", sorted(results["risk_type"].unique()),
+                                  format_func=lambda x: RISK_TYPE_LABEL.get(x, x))
+    action_filter = f2.multiselect("Agent action", sorted(results["agent_action"].unique()),
+                                    format_func=lambda x: ACTION_LABEL.get(x, x))
+    segment_filter = f3.multiselect("Customer segment", sorted(results["customer_segment"].unique()))
 
-wf_fig = go.Figure()
-wf_fig.add_trace(go.Scatter(
-    x=daily["day"], y=daily["cumulative_recovered"], mode="lines+markers",
-    line=dict(color=BLUE, width=2), marker=dict(color=BLUE, size=9),
-    hovertemplate="Day %{x}: ₹%{y:,.0f} recovered so far<extra></extra>",
-))
-wf_fig.update_layout(
-    height=280, margin=dict(l=10, r=10, t=10, b=10),
-    plot_bgcolor="#fcfcfb", paper_bgcolor="#fcfcfb",
-    font=dict(color=INK_PRIMARY),
-    xaxis=dict(title="Simulated day", gridcolor=GRID, zeroline=False, dtick=1),
-    yaxis=dict(title="Cumulative ₹ recovered", gridcolor=GRID),
-    showlegend=False,
-)
-st.plotly_chart(wf_fig, width="stretch")
+    view = results.copy()
+    if risk_filter:
+        view = view[view["risk_type"].isin(risk_filter)]
+    if action_filter:
+        view = view[view["agent_action"].isin(action_filter)]
+    if segment_filter:
+        view = view[view["customer_segment"].isin(segment_filter)]
 
-last_day = daily.iloc[-1]
-st.caption(
-    f"By day {int(last_day['day'])}: **{int(last_day['cumulative_resolved'])}** of "
-    f"{len(df)} transactions resolved, **₹{last_day['cumulative_recovered']:,.0f}** recovered — "
-    f"note this exceeds the single-pass total above, because the workflow gets multiple "
-    f"scheduled chances (retry steps, promise deadlines) that a one-shot decision doesn't."
-)
-with st.expander("Day-by-day detail"):
-    st.dataframe(daily, width="stretch")
+    st.dataframe(
+        view[[
+            "transaction_id", "risk_type", "failure_reason", "amount", "customer_segment",
+            "recoverability_score", "agent_action", "agent_channel", "agent_retry_method",
+            "promise_to_pay_status", "agent_resolved", "agent_recovered_amount", "agent_intervention_cost",
+        ]].sort_values("recoverability_score", ascending=False),
+        width="stretch", height=280,
+    )
 
-st.divider()
+    st.divider()
 
-# ------------------------------------------------------- transaction table -
-st.subheader("Transaction queue")
-f1, f2, f3 = st.columns(3)
-risk_filter = f1.multiselect("Risk type", sorted(results["risk_type"].unique()))
-action_filter = f2.multiselect("Agent action", sorted(results["agent_action"].unique()))
-segment_filter = f3.multiselect("Customer segment", sorted(results["customer_segment"].unique()))
+    st.subheader("Inspect one decision")
+    txn_id = st.selectbox("Transaction ID", view["transaction_id"].tolist() if not view.empty else results["transaction_id"].tolist())
 
-view = results.copy()
-if risk_filter:
-    view = view[view["risk_type"].isin(risk_filter)]
-if action_filter:
-    view = view[view["agent_action"].isin(action_filter)]
-if segment_filter:
-    view = view[view["customer_segment"].isin(segment_filter)]
+    if txn_id:
+        row = df[df["transaction_id"] == txn_id].iloc[0]
+        res_row = results[results["transaction_id"] == txn_id].iloc[0]
+        decision = decide(row, float(res_row["recoverability_score"]), systemic_issues)
 
-st.dataframe(
-    view[[
-        "transaction_id", "risk_type", "failure_reason", "amount", "customer_segment",
-        "recoverability_score", "agent_action", "agent_channel", "agent_retry_method",
-        "promise_to_pay_status", "agent_resolved", "agent_recovered_amount", "agent_intervention_cost",
-    ]].sort_values("recoverability_score", ascending=False),
-    width="stretch", height=280,
-)
+        d1, d2 = st.columns([1, 1])
+        with d1:
+            with st.container(border=True):
+                st.markdown(f"**Customer:** {row['customer_name']} ({row['customer_segment']})")
+                st.markdown(f"**Amount:** ₹{row['amount']:,.0f} · **Risk type:** {RISK_TYPE_LABEL.get(row['risk_type'], row['risk_type'])}")
+                st.markdown(f"**Failure reason:** {row['failure_reason'].replace('_', ' ')} · **Method:** {row['payment_method']}")
+                st.markdown(f"**Previous attempts:** {row['previous_attempts']} · **Recoverability score:** {res_row['recoverability_score']:.2f}")
 
-st.divider()
+                st.markdown("**Why this score — top contributing factors:**")
+                for feat, contrib in model.explain(row):
+                    direction = "↑ increases" if contrib > 0 else "↓ decreases"
+                    st.markdown(f"- `{feat}` — {direction} recoverability ({contrib:+.2f})")
 
-# ----------------------------------------------------------- drill-down ----
-st.subheader("Inspect one decision")
-txn_id = st.selectbox("Transaction ID", view["transaction_id"].tolist() if not view.empty else results["transaction_id"].tolist())
+        with d2:
+            with st.container(border=True):
+                st.markdown(f"**Agent decision:** {ACTION_LABEL.get(decision.action, decision.action)}"
+                            + (f" via `{decision.channel}`" if decision.channel else ""))
+                if decision.retry_method:
+                    st.markdown(f"**Retry sequencer:** `{decision.retry_method}` method, in {decision.retry_delay_hours}h")
+                st.markdown(f"**Estimated intervention cost:** ₹{res_row['agent_intervention_cost']:.2f}")
+                st.markdown("**Reasoning:**")
+                for r in decision.reasoning:
+                    st.markdown(f"- {r}")
 
-if txn_id:
-    row = df[df["transaction_id"] == txn_id].iloc[0]
-    res_row = results[results["transaction_id"] == txn_id].iloc[0]
-    decision = decide(row, float(res_row["recoverability_score"]), systemic_issues)
+                if res_row["promise_to_pay_status"] in ("kept", "broken"):
+                    icon = "✅" if res_row["promise_to_pay_status"] == "kept" else "🚨"
+                    st.markdown(f"**Promise-to-pay tracker:** {icon} {res_row['promise_to_pay_note']}")
 
-    d1, d2 = st.columns([1, 1])
-    with d1:
-        st.markdown(f"**Customer:** {row['customer_name']} ({row['customer_segment']})")
-        st.markdown(f"**Amount:** ₹{row['amount']:,.0f} · **Risk type:** {row['risk_type']}")
-        st.markdown(f"**Failure reason:** {row['failure_reason']} · **Method:** {row['payment_method']}")
-        st.markdown(f"**Previous attempts:** {row['previous_attempts']} · **Recoverability score:** {res_row['recoverability_score']:.2f}")
+                if decision.action == "SEND_MESSAGE":
+                    msg = generate_message(row, decision)
+                    st.markdown("**Generated message:**")
+                    st.info(msg)
+                    if decision.channel == "voice_hinglish":
+                        if st.button("\U0001F50A Play agent's voice message"):
+                            with tempfile.TemporaryDirectory() as tmp:
+                                out_path = os.path.join(tmp, "message.wav")
+                                ok = synthesize_voice(msg, out_path)
+                                if ok:
+                                    with open(out_path, "rb") as f:
+                                        st.audio(f.read(), format="audio/wav")
+                                else:
+                                    st.warning("Offline TTS engine not available in this environment — message text shown above.")
 
-        st.markdown("**Why this score — top contributing factors:**")
-        for feat, contrib in model.explain(row):
-            direction = "↑ increases" if contrib > 0 else "↓ decreases"
-            st.markdown(f"- `{feat}` — {direction} recoverability ({contrib:+.2f})")
+                razorpay_call = build_call(row, decision)
+                if razorpay_call is not None:
+                    with st.expander("Razorpay API call this would trigger"):
+                        st.code(f"{razorpay_call.method} {razorpay_call.path}", language="text")
+                        st.json(razorpay_call.payload)
+                        st.caption(razorpay_call.note)
 
-    with d2:
-        st.markdown(f"**Agent decision:** `{decision.action}`" + (f" via `{decision.channel}`" if decision.channel else ""))
-        if decision.retry_method:
-            st.markdown(f"**Retry sequencer:** `{decision.retry_method}` method, in {decision.retry_delay_hours}h")
-        st.markdown(f"**Estimated intervention cost:** ₹{res_row['agent_intervention_cost']:.2f}")
-        st.markdown("**Reasoning:**")
-        for r in decision.reasoning:
-            st.markdown(f"- {r}")
+        st.markdown("**Full audit trail for this transaction:**")
+        trail = audit.for_transaction(txn_id)
+        if not trail.empty:
+            st.dataframe(trail[["timestamp", "action", "reasoning", "stopping_rule_triggered", "systemic_issue_note"]], width="stretch")
+        else:
+            st.caption("No audit entries found — re-run the batch to regenerate the log.")
 
-        if res_row["promise_to_pay_status"] in ("kept", "broken"):
-            icon = "✅" if res_row["promise_to_pay_status"] == "kept" else "🚨"
-            st.markdown(f"**Promise-to-pay tracker:** {icon} {res_row['promise_to_pay_note']}")
+# ================================================================ MERCHANT ==
+with tab_merchant:
+    st.caption("A simplified view — what a merchant using Recovery Copilot would actually see, not the technical detail above.")
 
-        if decision.action == "SEND_MESSAGE":
-            msg = generate_message(row, decision)
-            st.markdown("**Generated message:**")
-            st.info(msg)
-            if decision.channel == "voice_hinglish":
-                if st.button("\U0001F50A Play agent's voice message"):
-                    with tempfile.TemporaryDirectory() as tmp:
-                        out_path = os.path.join(tmp, "message.wav")
-                        ok = synthesize_voice(msg, out_path)
-                        if ok:
-                            with open(out_path, "rb") as f:
-                                st.audio(f.read(), format="audio/wav")
-                        else:
-                            st.warning("Offline TTS engine not available in this environment — message text shown above.")
+    st.markdown(f"## This batch, Recovery Copilot recovered **₹{summary['agent_net_recovered']:,.0f}** for you")
+    st.markdown(
+        f"out of ₹{summary['total_at_risk']:,.0f} that was at risk across {summary['n_transactions']} transactions "
+        f"— **{summary['agent_recovery_rate']:.0f}%** recovered, automatically."
+    )
 
-        razorpay_call = build_call(row, decision)
-        if razorpay_call is not None:
-            with st.expander("Razorpay API call this would trigger"):
-                st.code(f"{razorpay_call.method} {razorpay_call.path}", language="text")
-                st.json(razorpay_call.payload)
-                st.caption(razorpay_call.note)
+    st.write("")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Transactions handled", summary["n_transactions"])
+    m2.metric("Currently in progress", int((results["agent_action"] != "STOP").sum()) - int(results["agent_resolved"].sum()),
+               help="Retries, nudges, and escalations still working toward recovery")
+    m3.metric("Sent to a human for review", int((results["agent_action"] == "ESCALATE_HUMAN").sum()))
 
-    st.markdown("**Full audit trail for this transaction:**")
-    trail = audit.for_transaction(txn_id)
-    if not trail.empty:
-        st.dataframe(trail[["timestamp", "action", "reasoning", "stopping_rule_triggered", "systemic_issue_note"]], width="stretch")
-    else:
-        st.caption("No audit entries found — re-run the batch to regenerate the log.")
+    st.write("")
+    st.markdown("#### Your top reasons for lost revenue right now")
+    top_reasons = (
+        results.groupby("failure_reason")["amount"].sum().sort_values(ascending=False).head(5).reset_index()
+    )
+    top_reasons["failure_reason"] = top_reasons["failure_reason"].str.replace("_", " ")
+    fig3 = go.Figure(go.Bar(
+        x=top_reasons["amount"], y=top_reasons["failure_reason"], orientation="h",
+        marker_color=ORANGE, hovertemplate="₹%{x:,.0f} at risk<extra></extra>",
+    ))
+    fig3.update_layout(
+        height=260, margin=dict(l=10, r=10, t=10, b=10),
+        plot_bgcolor=SURFACE, paper_bgcolor=SURFACE, font=dict(color=INK_PRIMARY),
+        xaxis=dict(title="₹ at risk", gridcolor=GRID, zeroline=False),
+        yaxis=dict(title="", categoryorder="total ascending"),
+    )
+    st.plotly_chart(fig3, width="stretch")
+
+    if systemic_issues:
+        st.write("")
+        with st.container(border=True):
+            st.markdown("#### ⚠️ Heads up")
+            for issue in systemic_issues.values():
+                st.markdown(
+                    f"Your **{issue.payment_method}** payments are failing more than usual right now "
+                    f"({issue.ratio:.0f}x normal) — this looks like a bank/gateway issue, not your customers. "
+                    f"We've paused retries for these and alerted your ops team so nobody gets spammed during the outage."
+                )
