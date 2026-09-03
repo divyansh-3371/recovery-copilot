@@ -7,7 +7,9 @@ pipeline. Run with:
 from __future__ import annotations
 
 import os
+import random
 import tempfile
+from datetime import datetime
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -16,12 +18,13 @@ import streamlit as st
 
 from agent.audit import AuditTrail
 from agent.classifier import train_default_model
+from agent.cost_model import estimate_cost
 from agent.messenger import generate_message, synthesize_voice
 from agent.pipeline import run_pipeline
 from agent.policy import decide
 from agent.razorpay_client import build_call
 from agent.workflow import run_workflow
-from data.generate_data import generate
+from data.generate_data import CUSTOMER_SEGMENTS, FAILURE_REASONS, PAYMENT_METHODS, RISK_TYPES, generate
 
 # --- palette (dataviz skill reference palette, light mode) ------------------
 BLUE = "#2a78d6"
@@ -89,8 +92,16 @@ def get_workflow(seed: int, n_days: int):
 # ---------------------------------------------------------------- sidebar ---
 st.sidebar.title("\U0001F4B8 Recovery Copilot")
 st.sidebar.caption("AI Revenue Recovery agent — Razorpay AI Buildathon")
-seed = st.sidebar.number_input("Batch seed", min_value=1, max_value=9999, value=42, step=1)
-st.sidebar.caption("Change the seed to run the agent fresh on a new synthetic batch of at-risk transactions.")
+
+if "seed" not in st.session_state:
+    st.session_state["seed"] = 42
+if st.sidebar.button("\U0001F3B2 Randomize batch", width="stretch"):
+    st.session_state["seed"] = random.randint(1, 9999)
+
+seed = st.sidebar.number_input("Batch seed", min_value=1, max_value=9999, step=1, key="seed")
+st.sidebar.caption("Change the seed (or hit Randomize) to run the agent fresh on a new synthetic batch — "
+                    "everything below recomputes, live, from that new data.")
+st.sidebar.caption(f"\U0001F7E2 Recomputed at {datetime.now().strftime('%H:%M:%S')}")
 with st.sidebar.expander("What is this agent doing? (for reviewers)"):
     st.markdown(
         "**Targets Razorpay's own bar for this track:**\n"
@@ -115,9 +126,89 @@ st.caption(
     "audit trail and compliance stopping rules."
 )
 
-tab_overview, tab_workflow, tab_investigate, tab_merchant = st.tabs(
-    ["\U0001F4CA Overview", "\U0001F5D3️ Multi-day workflow", "\U0001F50D Investigate", "\U0001F3EA Merchant view"]
+tab_live, tab_overview, tab_workflow, tab_investigate, tab_merchant = st.tabs(
+    ["\U0001F9EA Try it live", "\U0001F4CA Overview", "\U0001F5D3️ Multi-day workflow", "\U0001F50D Investigate", "\U0001F3EA Merchant view"]
 )
+
+# ================================================================ TRY LIVE ==
+with tab_live:
+    st.subheader("Feed the agent a transaction yourself")
+    st.caption(
+        "This isn't pre-computed — change anything below and the agent re-scores, "
+        "re-decides, and re-explains itself immediately, on your input, using the "
+        "same classifier/policy/cost-model/Razorpay-mapping code as everywhere else "
+        "on this page."
+    )
+
+    lc1, lc2, lc3 = st.columns(3)
+    with lc1:
+        live_risk_type = st.selectbox("Risk type", RISK_TYPES, format_func=lambda x: RISK_TYPE_LABEL.get(x, x), key="live_risk_type")
+        live_failure_reason = st.selectbox("Failure reason", FAILURE_REASONS[live_risk_type], key="live_failure_reason")
+        live_amount = st.number_input("Amount (₹)", min_value=50.0, max_value=250000.0, value=5000.0, step=50.0, key="live_amount")
+    with lc2:
+        live_payment_method = st.selectbox("Payment method", PAYMENT_METHODS, key="live_payment_method")
+        live_segment = st.selectbox("Customer segment", CUSTOMER_SEGMENTS, index=1, key="live_segment")
+        live_attempts = st.slider("Previous attempts", 0, 4, 0, key="live_attempts")
+    with lc3:
+        live_hour = st.slider("Customer's local hour right now", 0, 23, 12, key="live_hour")
+        live_dnc = st.checkbox("Customer opted out (do-not-contact)", key="live_dnc")
+        st.caption("Tip: set attempts to 3+ to see the max-attempts stopping rule fire, "
+                   "or pick a (payment method, reason) pair matching a banner on the "
+                   "Overview tab to see it route to ops instead of the customer.")
+
+    live_row = pd.Series({
+        "transaction_id": "live_test_0001",
+        "customer_name": "Test Customer",
+        "amount": float(live_amount),
+        "currency": "INR",
+        "risk_type": live_risk_type,
+        "failure_reason": live_failure_reason,
+        "payment_method": live_payment_method,
+        "customer_segment": live_segment,
+        "previous_attempts": int(live_attempts),
+        "do_not_contact": bool(live_dnc),
+        "customer_local_hour": int(live_hour),
+        "days_since_event": 0,
+        "_true_recoverable_prob": 0.0,
+    })
+    live_score = float(model.predict_proba(pd.DataFrame([live_row]))[0])
+    live_decision = decide(live_row, live_score, systemic_issues)
+
+    st.divider()
+    r1, r2 = st.columns([1, 1])
+    with r1:
+        with st.container(border=True):
+            st.markdown(f"### Recoverability score: **{live_score:.2f}**")
+            st.progress(min(max(live_score, 0.0), 1.0))
+            for feat, contrib in model.explain(live_row):
+                direction = "↑ increases" if contrib > 0 else "↓ decreases"
+                st.markdown(f"- `{feat}` — {direction} recoverability ({contrib:+.2f})")
+
+    with r2:
+        with st.container(border=True):
+            action_color = STATUS_CRITICAL if live_decision.action == "STOP" else STATUS_GOOD
+            st.markdown(
+                f"### Decision: <span style='color:{action_color}'>{ACTION_LABEL.get(live_decision.action, live_decision.action)}</span>"
+                + (f" via `{live_decision.channel}`" if live_decision.channel else ""),
+                unsafe_allow_html=True,
+            )
+            if live_decision.retry_method:
+                st.markdown(f"**Retry sequencer:** `{live_decision.retry_method}` method, in {live_decision.retry_delay_hours}h")
+            st.markdown(f"**Estimated cost:** ₹{estimate_cost(live_decision):.2f}")
+            st.markdown("**Reasoning:**")
+            for r in live_decision.reasoning:
+                st.markdown(f"- {r}")
+
+    if live_decision.action == "SEND_MESSAGE":
+        st.markdown("**Message the agent would send:**")
+        st.info(generate_message(live_row, live_decision))
+
+    live_call = build_call(live_row, live_decision)
+    if live_call is not None:
+        with st.expander("Razorpay API call this would trigger"):
+            st.code(f"{live_call.method} {live_call.path}", language="text")
+            st.json(live_call.payload)
+            st.caption(live_call.note)
 
 # =============================================================== OVERVIEW ===
 with tab_overview:
