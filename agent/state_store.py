@@ -28,6 +28,17 @@ CREATE TABLE IF NOT EXISTS transaction_state (
 );
 """
 
+# SQLite can't parameterize identifiers (only values) -- update_state builds
+# its SET clause from dict *keys*, so those keys must be checked against an
+# explicit allowlist rather than trusted, even though every caller today is
+# internal. This is what actually stops a SQL-injection-via-column-name
+# attempt, not "we only call this with hardcoded kwargs."
+UPDATABLE_COLUMNS = {
+    "previous_attempts", "resolved", "recovered_amount", "terminal",
+    "terminal_reason", "promise_status", "promise_due_day",
+    "last_action", "last_updated_day",
+}
+
 
 def reset(db_path: str = DB_PATH) -> None:
     if os.path.exists(db_path):
@@ -63,6 +74,9 @@ def get_state(conn: sqlite3.Connection, transaction_id: str) -> sqlite3.Row:
 def update_state(conn: sqlite3.Connection, transaction_id: str, **fields) -> None:
     if not fields:
         return
+    unknown = set(fields) - UPDATABLE_COLUMNS
+    if unknown:
+        raise ValueError(f"Refusing to update unknown column(s): {sorted(unknown)}")
     sets = ", ".join(f"{k} = ?" for k in fields)
     values = list(fields.values()) + [transaction_id]
     conn.execute(f"UPDATE transaction_state SET {sets} WHERE transaction_id = ?", values)
