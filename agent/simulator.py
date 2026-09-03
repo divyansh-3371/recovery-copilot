@@ -15,7 +15,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from agent.policy import CARD_UPDATE_REASONS, Decision
+from agent.cost_model import BASELINE_ACTION_COST, estimate_cost
+from agent.decision_table import CUSTOMER_ACTION_REASONS as CARD_UPDATE_REASONS
+from agent.decision_table import RETRY_FRIENDLY_REASONS
+from agent.policy import Decision
 from agent.promise_tracker import classify_promise
 from agent.root_cause import SystemicIssue
 
@@ -28,9 +31,6 @@ _CHANNEL_MULTIPLIER = {
     "sms": 0.85,
     "email": 0.80,
 }
-
-
-RETRY_FRIENDLY_REASONS = ("bank_timeout", "network_drop", "insufficient_funds", "mandate_bank_error", "mandate_insufficient_funds")
 
 
 def agent_outcome_multiplier(decision: Decision, failure_reason: str) -> float:
@@ -90,6 +90,12 @@ def simulate_batch(
         # already resolved above, so it never contradicts the recovered-₹ math
         promise = classify_promise(row, decision.action, agent_resolved, rng)
 
+        # --- intervention cost: the proof layer needs NET recovered, not
+        # just gross -- "recovered more" can hide "recovered it more
+        # expensively than it was worth" -----------------------------------
+        agent_cost = estimate_cost(decision)
+        baseline_cost = BASELINE_ACTION_COST
+
         records.append({
             "transaction_id": row["transaction_id"],
             "risk_type": row["risk_type"],
@@ -104,10 +110,12 @@ def simulate_batch(
             "agent_systemic_issue": decision.systemic_issue_note,
             "agent_resolved": agent_resolved,
             "agent_recovered_amount": agent_recovered,
+            "agent_intervention_cost": agent_cost,
             "promise_to_pay_status": promise.status,
             "promise_to_pay_note": promise.note,
             "baseline_resolved": baseline_resolved,
             "baseline_recovered_amount": baseline_recovered,
+            "baseline_intervention_cost": baseline_cost,
             "baseline_compliance_violation": baseline_violation,
         })
 
@@ -122,6 +130,11 @@ def summarize(results: pd.DataFrame) -> dict:
     promises_kept = int((results["promise_to_pay_status"] == "kept").sum())
     promises_broken = int((results["promise_to_pay_status"] == "broken").sum())
 
+    agent_cost = results["agent_intervention_cost"].sum()
+    baseline_cost = results["baseline_intervention_cost"].sum()
+    agent_net_recovered = agent_recovered - agent_cost
+    baseline_net_recovered = baseline_recovered - baseline_cost
+
     return {
         "total_at_risk": total_at_risk,
         "agent_recovered": agent_recovered,
@@ -133,5 +146,11 @@ def summarize(results: pd.DataFrame) -> dict:
         "baseline_compliance_violations_avoided": int(violations),
         "promises_kept": promises_kept,
         "promises_broken": promises_broken,
+        # --- cost of intervention (criterion 5's proof layer, in full) -----
+        "agent_intervention_cost": agent_cost,
+        "baseline_intervention_cost": baseline_cost,
+        "agent_net_recovered": agent_net_recovered,
+        "baseline_net_recovered": baseline_net_recovered,
+        "net_uplift_amount": agent_net_recovered - baseline_net_recovered,
         "n_transactions": len(results),
     }
