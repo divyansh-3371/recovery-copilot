@@ -39,7 +39,7 @@ class SystemicIssue:
         return (
             f"{self.payment_method.upper()} '{self.failure_reason}' failures are running "
             f"{self.ratio:.1f}x above baseline ({self.recent_count} in the last "
-            f"{RECENT_DAYS_WINDOW}d) — likely an infra/bank-side degradation, not a "
+            f"{RECENT_DAYS_WINDOW}d) - likely an infra/bank-side degradation, not a "
             f"customer-side problem. Pausing customer-facing retries; escalating to ops."
         )
 
