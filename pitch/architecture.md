@@ -91,6 +91,24 @@ app.py (Streamlit + Plotly dashboard)
    generated message, on-demand voice playback, full audit trail).
 ```
 
+## Two directions added after re-checking against the track spec
+
+Re-reading Razorpay's exact track text (example directions + "the bar")
+surfaced two named directions that weren't explicit yet:
+
+- **`agent/retry_sequencer.py`** — the "mandate retry sequencer" direction.
+  Retry timing/method had been inline, ad-hoc logic inside `policy.py`;
+  it's now a named, explicit multi-step sequence (immediate → delayed →
+  fallback method / manual re-authorization link) for both plain payment
+  retries and subscription mandates specifically.
+- **`agent/promise_tracker.py`** — the "promise-to-pay tracker" direction,
+  which didn't exist at all. For overdue invoices and failed subscriptions
+  where the customer is messaged, it classifies whether a promise to pay
+  was made and whether it was kept — reusing the batch's own resolved
+  outcome as ground truth rather than a second independent coin flip, so
+  it can never contradict the recovered-₹ numbers — and a broken promise
+  triggers its own audit-logged escalation instead of silently dropping.
+
 ## Key design decisions
 
 - **Logistic regression over a heavier model, deliberately.** The

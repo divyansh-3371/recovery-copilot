@@ -16,6 +16,18 @@ compliant stopping-rules policy, and a complete audit trail.
 | Complete audit trail for all actions | `agent/audit.py` — one JSON line per decision, with full reasoning, written to `data/audit_log.jsonl` |
 | Move beyond detection to actual recovery execution | The policy engine doesn't just flag risk — it picks a concrete action (`RETRY_PAYMENT`, `SEND_MESSAGE`, `ESCALATE_HUMAN`, `ESCALATE_OPS`, `STOP`) and the simulator resolves its real outcome |
 
+## Coverage of the track's example directions
+
+| Direction | Status | Where |
+|---|---|---|
+| Payment degradation → root cause → recovery action | ✅ | `agent/root_cause.py` + `ESCALATE_OPS` |
+| Checkout drop-off recovery | ✅ | `risk_type=checkout_abandonment` |
+| Failed-subscription recovery | ✅ | `risk_type=subscription_failure` |
+| B2B receivables chaser | ✅ | `risk_type=invoice_overdue` |
+| Mandate retry sequencer | ✅ | `agent/retry_sequencer.py` — explicit multi-step sequence, not a single blind retry |
+| Hinglish voice recovery | ✅ | `agent/messenger.py` — offline TTS |
+| Promise-to-pay tracker | ✅ | `agent/promise_tracker.py` — classifies kept/broken, auto-escalates broken promises |
+
 ## Architecture
 
 ```

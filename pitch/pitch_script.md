@@ -45,6 +45,16 @@ Timing is a guide, not a script to read verbatim — say it in your own words.
    chose. Here's the actual message it generated. And here's the full audit
    trail — every action, timestamped, with its reasoning, permanently
    logged."*
+   Then pick one with `RETRY_PAYMENT` on a subscription failure:
+   *"This isn't one blind retry — it's an explicit mandate retry sequence:
+   immediate re-presentment, then a delayed retry, then a fallback to a
+   manual re-authorization link if both silently fail."*
+   Then find one with a promise-to-pay note (filter the table, or just
+   re-roll the seed):
+   *"And when a customer promises to pay by a date instead of paying
+   immediately, the tracker doesn't just accept that at face value — it
+   checks whether the promise was kept, and a broken one gets auto-escalated
+   to a human agent instead of quietly disappearing."*
 6. **If you have a `voice_hinglish` transaction:** click play. *"For
    returning customers who've already missed one attempt, the agent
    switches to a Hinglish voice nudge — synthesized fully offline, no

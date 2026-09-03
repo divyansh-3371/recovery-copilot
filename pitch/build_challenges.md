@@ -61,3 +61,18 @@ body, so window-level scroll APIs are no-ops.
 **Fix:** ran a small JS snippet that finds the actual scrollable container
 (`scrollHeight - clientHeight > threshold`) and scrolls that element
 directly, then took viewport screenshots at each scroll position.
+
+## 6. Two named track directions were missing entirely
+
+**Problem:** re-reading Razorpay's exact track text against the built
+codebase turned up two of the seven named "example directions" that weren't
+properly covered — the mandate retry sequence existed only as inline,
+ad-hoc delay logic buried in `policy.py` (not an explicit, inspectable
+component), and a promise-to-pay tracker didn't exist at all.
+
+**Fix:** added `agent/retry_sequencer.py` (an explicit multi-step retry
+table for payments and mandates) and `agent/promise_tracker.py` (classifies
+promise-to-pay outcomes and auto-escalates broken ones), and wired both into
+`policy.py` / `simulator.py` / `pipeline.py`. The lesson: check the spec's
+named list item-by-item against the actual code, not against what the
+build was *intended* to cover.
