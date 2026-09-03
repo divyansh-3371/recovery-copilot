@@ -108,21 +108,29 @@ if systemic_issues:
         )
 
 # ------------------------------------------------------------- KPI row -----
-k1, k2, k3, k4, k5 = st.columns(5)
+k1, k2, k3 = st.columns(3)
 k1.metric("Total revenue at risk", f"₹{summary['total_at_risk']:,.0f}", help="Sum of all at-risk transactions in this batch")
 k2.metric(
-    "Recovered by agent", f"₹{summary['agent_recovered']:,.0f}",
+    "Recovered by agent (gross)", f"₹{summary['agent_recovered']:,.0f}",
     delta=f"+₹{summary['uplift_amount']:,.0f} vs baseline",
 )
 k3.metric(
     "Recovery rate", f"{summary['agent_recovery_rate']:.1f}%",
     delta=f"+{summary['agent_recovery_rate'] - summary['baseline_recovery_rate']:.1f}pp vs baseline",
 )
+
+k4, k5, k6 = st.columns(3)
 k4.metric(
+    "Net recovered (after cost)", f"₹{summary['agent_net_recovered']:,.0f}",
+    delta=f"+₹{summary['net_uplift_amount']:,.0f} vs baseline net",
+    help=f"Gross recovered minus intervention cost (₹{summary['agent_intervention_cost']:,.0f} spent recovering it) "
+         f"— recovering more only counts if it didn't cost more than it was worth",
+)
+k5.metric(
     "Compliance violations avoided", summary["baseline_compliance_violations_avoided"],
     help="Do-not-contact / max-attempt violations the naive baseline would have committed",
 )
-k5.metric(
+k6.metric(
     "Promises kept / broken", f"{summary['promises_kept']} / {summary['promises_broken']}",
     help="Promise-to-pay tracker: broken promises are auto-escalated to a human agent, not dropped",
 )
@@ -246,7 +254,7 @@ st.dataframe(
     view[[
         "transaction_id", "risk_type", "failure_reason", "amount", "customer_segment",
         "recoverability_score", "agent_action", "agent_channel", "agent_retry_method",
-        "promise_to_pay_status", "agent_resolved", "agent_recovered_amount",
+        "promise_to_pay_status", "agent_resolved", "agent_recovered_amount", "agent_intervention_cost",
     ]].sort_values("recoverability_score", ascending=False),
     width="stretch", height=280,
 )
@@ -278,6 +286,7 @@ if txn_id:
         st.markdown(f"**Agent decision:** `{decision.action}`" + (f" via `{decision.channel}`" if decision.channel else ""))
         if decision.retry_method:
             st.markdown(f"**Retry sequencer:** `{decision.retry_method}` method, in {decision.retry_delay_hours}h")
+        st.markdown(f"**Estimated intervention cost:** ₹{res_row['agent_intervention_cost']:.2f}")
         st.markdown("**Reasoning:**")
         for r in decision.reasoning:
             st.markdown(f"- {r}")
