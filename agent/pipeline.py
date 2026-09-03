@@ -39,11 +39,28 @@ def run_pipeline(
                 "channel": decision.channel,
                 "retry_delay_hours": decision.retry_delay_hours,
                 "scheduled_hour": decision.scheduled_hour,
+                "failure_reason": row["failure_reason"],
             },
         )
         decisions.append(decision)
 
     results = simulate_batch(df, decisions, systemic_issues)
+
+    # outcome logging: the decision above was logged before its result was
+    # known -- this closes the loop with what actually happened, so the
+    # audit trail covers outcome, not just intent (criterion 4).
+    for _, r in results.iterrows():
+        audit.log(
+            transaction_id=r["transaction_id"],
+            action="OUTCOME_RESOLVED" if r["agent_resolved"] else "OUTCOME_UNRESOLVED",
+            reasoning=[f"Outcome for action '{r['agent_action']}': "
+                       f"{'recovered' if r['agent_resolved'] else 'not recovered'}."],
+            extra={
+                "failure_reason": r["failure_reason"],
+                "resolved": bool(r["agent_resolved"]),
+                "recovered_amount": float(r["agent_recovered_amount"]),
+            },
+        )
 
     # promise-to-pay tracker: a broken promise gets its own audit entry and
     # an explicit escalation, rather than silently vanishing from the trail
@@ -53,7 +70,7 @@ def run_pipeline(
             transaction_id=r["transaction_id"],
             action="ESCALATE_HUMAN",
             reasoning=[r["promise_to_pay_note"], "Promise-to-pay tracker: escalating broken promise for manual follow-up."],
-            extra={"escalation_source": "promise_to_pay_tracker"},
+            extra={"escalation_source": "promise_to_pay_tracker", "failure_reason": r["failure_reason"]},
         )
 
     summary = summarize(results)
