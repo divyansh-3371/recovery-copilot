@@ -64,12 +64,37 @@ data/generate_data.py  →  synthetic batch of at-risk revenue events
 
 See `pitch/architecture.md` for the fuller write-up.
 
+## Beyond the single-pass MVP
+
+Four additions push this past a one-shot demo toward something that argues
+for itself as production-minded:
+
+- **`agent/razorpay_client.py`** — maps every bounded action to the Razorpay
+  API call it would actually trigger (Payment Links create+notify, a fresh
+  Order for a scheduled retry, an internal ops-alert route for systemic
+  issues) — stubbed, no live calls, but shown live in the dashboard's
+  drill-down so it's clear this isn't operating in the abstract.
+- **`agent/workflow.py` + `agent/state_store.py`** — a multi-day, *stateful*
+  simulation (SQLite-backed) proving "executes a bounded recovery workflow"
+  means more than a single decision: the retry sequencer genuinely advances
+  step by step across simulated days, and a promise-to-pay deadline
+  genuinely arrives and gets checked. See the dashboard's "Multi-day
+  workflow simulation" section, or run `python simulate_workflow.py`.
+- **`tests/` (32 tests) + `.github/workflows/tests.yml`** — the stopping
+  rules, the root-cause detector, the retry sequencer, the promise tracker,
+  the simulator's uplift math, and the workflow's state machine all have
+  tests; CI runs them on every push.
+- **`api.py`** — the same pipeline exposed as a FastAPI service
+  (`/decide`, `/batch/demo`), so it's callable from a real backend, not only
+  runnable as a CLI or a Streamlit demo.
+
 ## Tech stack
 
 Pure Python: `pandas` / `numpy` for data, `scikit-learn` for the recoverability
 model, `Streamlit` + `Plotly` for the dashboard, `anthropic` (optional, with a
 graceful template fallback) for message generation, `pyttsx3` for fully
-offline text-to-speech on the Hinglish voice channel.
+offline text-to-speech on the Hinglish voice channel, `sqlite3` (stdlib) for
+workflow state, `pytest` for tests, `fastapi`/`uvicorn` for the service layer.
 
 ## Running it
 
@@ -79,8 +104,17 @@ pip install -r requirements.txt
 # CLI: runs the full pipeline on a fresh synthetic batch, prints the summary
 python run_batch.py
 
+# Multi-day stateful workflow simulation
+python simulate_workflow.py --days 5
+
+# Test suite
+pytest -q
+
 # Dashboard
 streamlit run app.py
+
+# API service
+uvicorn api:app --reload
 ```
 
 Optional: set `ANTHROPIC_API_KEY` in your environment for LLM-generated
@@ -92,29 +126,41 @@ deterministic template so the demo never breaks.
 This is a buildathon MVP, built honestly:
 - **Real:** the trained classifier, the decision/policy engine, the stopping
   rules, the audit trail, the root-cause anomaly detector, the LLM message
-  generation, the offline TTS.
+  generation, the offline TTS, the multi-day state machine, the test suite,
+  the API service.
 - **Simulated:** the transaction data itself and whether an intervention
   "succeeds" — both come from `data/generate_data.py`, which encodes a hidden
   ground-truth recoverability prior never seen by the agent, used only by
-  `agent/simulator.py` to resolve realistic outcomes. In production this
-  batch would be a merchant's real failed-transaction feed and the training
-  data would be their real resolved-case history.
+  `agent/simulator.py` (and `agent/workflow.py`, day by day) to resolve
+  realistic outcomes. In production this batch would be a merchant's real
+  failed-transaction feed and the training data would be their real
+  resolved-case history; the Razorpay API calls in `agent/razorpay_client.py`
+  are stubs illustrating integration shape, not live calls.
 
 ## Project structure
 
 ```
-data/generate_data.py   synthetic batch generator (+ injected outage)
-agent/features.py       shared feature engineering
-agent/classifier.py     recoverability model (train + explain)
-agent/root_cause.py     portfolio-level degradation detector
-agent/policy.py         decision engine + stopping rules
-agent/messenger.py      message generation (LLM + template) + offline TTS
-agent/audit.py          append-only audit trail
-agent/simulator.py      outcome simulation + baseline comparison
-agent/pipeline.py       orchestrates the above
-run_batch.py            CLI entry point
-app.py                  Streamlit dashboard
-pitch/                  architecture doc, pitch script, build-challenges log
+data/generate_data.py     synthetic batch generator (+ injected outage)
+agent/features.py         shared feature engineering
+agent/classifier.py       recoverability model (train + explain)
+agent/root_cause.py       portfolio-level degradation detector
+agent/retry_sequencer.py  explicit mandate/payment retry sequence
+agent/promise_tracker.py  promise-to-pay classification
+agent/policy.py           decision engine + stopping rules
+agent/messenger.py        message generation (LLM + template) + offline TTS
+agent/razorpay_client.py  action -> Razorpay API call stub mapping
+agent/audit.py            append-only audit trail
+agent/simulator.py        outcome simulation + baseline comparison
+agent/state_store.py      SQLite persistence for the multi-day workflow
+agent/workflow.py         multi-day stateful workflow orchestrator
+agent/pipeline.py         single-pass orchestrator
+run_batch.py              CLI: single-pass batch run
+simulate_workflow.py      CLI: multi-day workflow simulation
+app.py                    Streamlit dashboard
+api.py                    FastAPI service (/decide, /batch/demo)
+tests/                    pytest suite (32 tests)
+.github/workflows/        CI: runs the test suite on every push
+pitch/                    architecture doc, pitch script, build-challenges log
 ```
 
 ## Build challenges & how they were resolved

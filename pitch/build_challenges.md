@@ -76,3 +76,33 @@ promise-to-pay outcomes and auto-escalates broken ones), and wired both into
 `policy.py` / `simulator.py` / `pipeline.py`. The lesson: check the spec's
 named list item-by-item against the actual code, not against what the
 build was *intended* to cover.
+
+## 7. Installing fastapi/uvicorn silently downgraded Streamlit's dependency
+
+**Problem:** `pip install fastapi uvicorn` resolved to a `fastapi` version
+pinned to `starlette<0.42`, downgrading the already-installed `starlette`
+from 1.6.0 to 0.41.3 — which is below the `>=0.46` Streamlit itself
+requires. Streamlit still happened to import afterward, but it was one
+`pip install` away from silently breaking the whole dashboard.
+
+**Fix:** `pip install --upgrade fastapi starlette` to pull a recent
+`fastapi` release with a wider `starlette` range, resolving both
+constraints together. Lesson: after adding any new dependency, re-verify
+the *existing* stack still imports — don't assume a successful `pip
+install` means nothing else moved.
+
+## 8. A collapsed Streamlit expander broke the screenshot verification script
+
+**Problem:** after adding the "Day-by-day detail" expander (collapsed by
+default) above the transaction table, the Playwright verification script's
+`wait_for_selector('[data-testid="stDataFrame"]')` started timing out —
+it matched the *first* dataframe in DOM order, which was the one hidden
+inside the collapsed expander, and Playwright's default visibility wait
+never resolves for a hidden element even when later, visible instances of
+the same selector exist on the page.
+
+**Fix:** switched the wait condition to a specific, always-visible text
+anchor (`text=Transaction queue`) instead of a selector that could match a
+hidden element first. General lesson for this project: prefer waiting on
+content known to be visible over a generic selector that might match
+inside a collapsed/hidden container.

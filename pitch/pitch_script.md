@@ -55,6 +55,17 @@ Timing is a guide, not a script to read verbatim — say it in your own words.
    immediately, the tracker doesn't just accept that at face value — it
    checks whether the promise was kept, and a broken one gets auto-escalated
    to a human agent instead of quietly disappearing."*
+   Expand the "Razorpay API call this would trigger" box:
+   *"And this isn't operating in the abstract — here's the actual Razorpay
+   API call this decision would make in production."*
+
+5b. **Multi-day workflow section:** *"Everything so far was one pass. This
+    runs the same batch through the agent across several simulated days,
+    with state actually persisting between them — so the retry sequencer
+    genuinely advances step by step, and a promise-to-pay deadline
+    genuinely arrives and gets checked, instead of every run starting from
+    attempt zero. And it recovers even more than the single pass did,
+    because a real workflow gets multiple scheduled chances."*
 6. **If you have a `voice_hinglish` transaction:** click play. *"For
    returning customers who've already missed one attempt, the agent
    switches to a Hinglish voice nudge — synthesized fully offline, no

@@ -109,6 +109,40 @@ surfaced two named directions that weren't explicit yet:
   it can never contradict the recovered-₹ numbers — and a broken promise
   triggers its own audit-logged escalation instead of silently dropping.
 
+## Four additions past the single-pass MVP
+
+With more runway than the initial build assumed, four more things were
+added specifically to close the gap between "a working demo" and "something
+that argues for itself as production-minded":
+
+- **`agent/razorpay_client.py`** maps every bounded action to the Razorpay
+  API call it would actually make (Payment Links create+notify for
+  `SEND_MESSAGE`, a fresh Order for a scheduled `RETRY_PAYMENT`, an internal
+  ops-alert route for `ESCALATE_OPS`). These are stubs — no live calls, no
+  credentials — deliberately hedged in their own docstrings as illustrative
+  of integration shape rather than pixel-perfect API accuracy, since getting
+  a real platform's own API subtly wrong in front of that platform's
+  engineers would undermine the point rather than support it.
+- **`agent/workflow.py` + `agent/state_store.py`** turn the single-pass
+  pipeline into a genuinely multi-day, stateful simulation. Every other
+  entry point re-decides from "attempt zero" every run; this one persists
+  each transaction's attempt count, terminal/resolved status, and
+  promise-to-pay deadline in SQLite across simulated days, so the retry
+  sequencer actually progresses through its steps and a promise's due date
+  actually arrives and gets checked — proof that "bounded recovery
+  workflow" means a process unfolding over time, not five if-branches
+  evaluated once.
+- **`tests/` + CI** — 32 pytest tests covering the stopping rules, the
+  root-cause detector's true positives/negatives, the retry sequence's
+  progression and exhaustion, the promise tracker's classification, the
+  simulator's uplift arithmetic, and the workflow's state machine (every
+  transaction ends resolved or terminal; cumulative recovery never
+  decreases). `.github/workflows/tests.yml` runs the suite on every push.
+- **`api.py`** exposes the same pipeline as a FastAPI service
+  (`/decide` for one transaction, `/batch/demo` for a full run), so
+  "callable from a real backend" isn't just a claim in a README — it's a
+  running endpoint.
+
 ## Key design decisions
 
 - **Logistic regression over a heavier model, deliberately.** The
