@@ -4,5 +4,6 @@ __pycache__/
 venv/
 .env
 data/transactions.csv
+data/results.csv
 data/audit_log.jsonl
 .streamlit/secrets.toml
