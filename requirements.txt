@@ -7,5 +7,6 @@ plotly
 anthropic
 pyttsx3
 pytest
+httpx
 fastapi
 uvicorn[standard]
