@@ -8,9 +8,17 @@ carries an explicit, logged reason.
 Actions (bounded — the agent can only ever pick one of these five):
   RETRY_PAYMENT   - reattempt the payment automatically (no customer contact)
   SEND_MESSAGE     - a personalized nudge to the customer, on a chosen channel
-  ESCALATE_HUMAN   - hand off to a human recovery agent (high value / low confidence)
+  ESCALATE_HUMAN   - hand off to a human recovery agent (high value / low confidence /
+                     a risk-engine block that needs manual review)
   ESCALATE_OPS     - a systemic/infra issue was detected; alert ops, don't blame the customer
   STOP             - do nothing further on this transaction, with a compliance reason
+
+Every failure-reason-specific judgment call here (which reasons need the
+customer to act, which are safe to blind-retry, which are a compliance
+signal that must never be auto-retried) is looked up from
+agent/decision_table.py rather than hardcoded per-file, so adding a new
+failure reason means adding one row there, not hunting through this file
+and simulator.py and keeping them in sync by hand.
 """
 from __future__ import annotations
 
@@ -18,6 +26,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from agent.decision_table import COMPLIANCE_REVIEW_REASONS, CUSTOMER_ACTION_REASONS, MANDATE_REASONS
 from agent.retry_sequencer import next_step as next_retry_step
 from agent.root_cause import SystemicIssue
 
@@ -28,8 +37,9 @@ HIGH_VALUE_AMOUNT = 20000.0
 MAX_ATTEMPTS = 3
 QUIET_HOURS = set(range(22, 24)) | set(range(0, 8))
 
-CARD_UPDATE_REASONS = {"card_expired", "wrong_cvv"}
-MANDATE_REASONS = {"mandate_expired", "mandate_insufficient_funds", "mandate_bank_error"}
+# kept as an alias -- simulator.py and existing callers refer to this name;
+# the actual data now lives in agent/decision_table.py
+CARD_UPDATE_REASONS = CUSTOMER_ACTION_REASONS
 
 
 @dataclass
@@ -89,8 +99,18 @@ def decide(row: pd.Series, score: float, systemic_issues: dict[tuple[str, str], 
         d.reasoning.append("Skipping customer-facing retry/message until infra issue clears (avoids blaming the customer).")
         return d
 
+    # --- risk/fraud-engine block: NEVER auto-retry, always human review ----
+    # (auto-retrying past a risk block is itself a compliance risk -- it can
+    # look like card-testing/fraud evasion, not legitimate recovery)
+    if row["failure_reason"] in COMPLIANCE_REVIEW_REASONS:
+        d.action = "ESCALATE_HUMAN"
+        d.reasoning.append(
+            f"Failure reason '{row['failure_reason']}' is a risk/fraud-engine signal — "
+            f"auto-retrying past it would itself be a compliance risk. Routing to human review, no auto-retry, no customer message."
+        )
+
     # --- card needs updating: never blind-retry, always ask the customer ---
-    if row["failure_reason"] in CARD_UPDATE_REASONS and row["risk_type"] == "payment_failure":
+    elif row["failure_reason"] in CARD_UPDATE_REASONS and row["risk_type"] == "payment_failure":
         d.action = "SEND_MESSAGE"
         d.channel = _choose_channel(row, score)
         d.reasoning.append(f"Failure reason '{row['failure_reason']}' needs the customer to act — retrying blindly would fail again.")
@@ -98,7 +118,7 @@ def decide(row: pd.Series, score: float, systemic_issues: dict[tuple[str, str], 
     # --- mandate retry sequencer: subscription/mandate failures follow an
     # explicit multi-step sequence rather than a single blind re-presentment
     elif score >= HIGH_SCORE and row["risk_type"] == "subscription_failure" and row["failure_reason"] in MANDATE_REASONS:
-        step = next_retry_step(row["previous_attempts"], is_mandate=True)
+        step = next_retry_step(row["previous_attempts"], is_mandate=True, failure_reason=row["failure_reason"])
         if step is None:
             d.stopping_rule_triggered = "retry_sequence_exhausted"
             d.reasoning.append("Mandate retry sequence exhausted with no success — stopping rather than retrying indefinitely.")
@@ -114,7 +134,7 @@ def decide(row: pd.Series, score: float, systemic_issues: dict[tuple[str, str], 
 
     # --- score-driven routing ------------------------------------------------
     elif score >= HIGH_SCORE and row["risk_type"] == "payment_failure":
-        step = next_retry_step(row["previous_attempts"], is_mandate=False)
+        step = next_retry_step(row["previous_attempts"], is_mandate=False, failure_reason=row["failure_reason"])
         if step is None:
             d.stopping_rule_triggered = "retry_sequence_exhausted"
             d.reasoning.append("Payment retry sequence exhausted with no success — stopping rather than retrying indefinitely.")
