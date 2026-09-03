@@ -1,0 +1,83 @@
+"""Tests for the decision engine's stopping rules and routing -- the module
+that answers the buildathon's "compliant escalation with stopping rules" bar.
+Every rule here must be checked BEFORE any customer-facing action."""
+from helpers import make_row
+
+from agent.policy import decide
+
+
+def test_do_not_contact_always_stops():
+    row = make_row(do_not_contact=True)
+    d = decide(row, score=0.95, systemic_issues={})
+    assert d.action == "STOP"
+    assert d.stopping_rule_triggered == "do_not_contact"
+
+
+def test_max_attempts_cap_stops_even_with_high_score():
+    row = make_row(previous_attempts=3)
+    d = decide(row, score=0.95, systemic_issues={})
+    assert d.action == "STOP"
+    assert d.stopping_rule_triggered == "max_attempts_reached"
+
+
+def test_uneconomical_amount_stops_for_non_vip():
+    row = make_row(amount=50.0, customer_segment="new")
+    d = decide(row, score=0.95, systemic_issues={})
+    assert d.action == "STOP"
+    assert d.stopping_rule_triggered == "uneconomical_amount"
+
+
+def test_uneconomical_amount_floor_does_not_apply_to_vip():
+    row = make_row(amount=50.0, customer_segment="vip", risk_type="payment_failure",
+                    failure_reason="bank_timeout")
+    d = decide(row, score=0.95, systemic_issues={})
+    assert d.stopping_rule_triggered != "uneconomical_amount"
+
+
+def test_systemic_issue_routes_to_escalate_ops_not_customer_contact():
+    row = make_row(payment_method="netbanking", failure_reason="bank_timeout")
+    from agent.root_cause import SystemicIssue
+    issue = SystemicIssue(payment_method="netbanking", failure_reason="bank_timeout",
+                           recent_count=30, recent_rate_per_day=30.0, baseline_rate_per_day=1.0, ratio=30.0)
+    d = decide(row, score=0.9, systemic_issues={("netbanking", "bank_timeout"): issue})
+    assert d.action == "ESCALATE_OPS"
+    assert d.channel is None  # never contacts the customer for a systemic issue
+
+
+def test_card_expired_never_gets_a_blind_retry():
+    row = make_row(failure_reason="card_expired", risk_type="payment_failure")
+    d = decide(row, score=0.9, systemic_issues={})
+    assert d.action == "SEND_MESSAGE"  # asks the customer to update their card, not a silent retry
+
+
+def test_high_score_payment_failure_retries():
+    row = make_row(risk_type="payment_failure", failure_reason="bank_timeout", previous_attempts=0)
+    d = decide(row, score=0.8, systemic_issues={})
+    assert d.action == "RETRY_PAYMENT"
+    assert d.retry_delay_hours is not None
+
+
+def test_low_score_low_value_stops():
+    row = make_row(amount=500.0, customer_segment="new")
+    d = decide(row, score=0.1, systemic_issues={})
+    assert d.stopping_rule_triggered == "low_confidence_low_value"
+
+
+def test_low_score_high_value_escalates_to_human():
+    row = make_row(amount=50000.0, customer_segment="returning")
+    d = decide(row, score=0.1, systemic_issues={})
+    assert d.action == "ESCALATE_HUMAN"
+
+
+def test_quiet_hours_defers_message_send():
+    row = make_row(customer_local_hour=2, risk_type="checkout_abandonment",
+                    failure_reason="cart_abandoned_otp", previous_attempts=0)
+    d = decide(row, score=0.5, systemic_issues={})
+    if d.action == "SEND_MESSAGE":
+        assert d.scheduled_hour == 9
+
+
+def test_every_decision_carries_reasoning():
+    row = make_row()
+    d = decide(row, score=0.5, systemic_issues={})
+    assert len(d.reasoning) > 0
