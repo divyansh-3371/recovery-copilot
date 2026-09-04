@@ -98,3 +98,49 @@ def test_risk_block_still_respects_stopping_rules_first():
     d = decide(row, score=0.9, systemic_issues={})
     assert d.action == "STOP"
     assert d.stopping_rule_triggered == "do_not_contact"
+
+
+# --- cost-aware value triage -------------------------------------------------
+
+def test_value_triage_overrides_card_update_reason():
+    """card_expired normally gets a SEND_MESSAGE (ask the customer to
+    update their card) -- at high enough value, a human reviews it instead,
+    regardless of that failure-reason mapping."""
+    row = make_row(failure_reason="card_expired", risk_type="payment_failure", amount=100_000.0)
+    d = decide(row, score=0.9, systemic_issues={})
+    assert d.action == "ESCALATE_HUMAN"
+    assert "value-triage" in " ".join(d.reasoning).lower()
+
+
+def test_value_triage_overrides_automated_retry():
+    """bank_timeout at high score normally gets an automated RETRY_PAYMENT --
+    at high enough value, a human reviews it instead."""
+    row = make_row(failure_reason="bank_timeout", risk_type="payment_failure", amount=200_000.0)
+    d = decide(row, score=0.9, systemic_issues={})
+    assert d.action == "ESCALATE_HUMAN"
+
+
+def test_value_triage_does_not_apply_below_threshold():
+    """Just under the threshold, normal failure-reason routing still applies."""
+    row = make_row(failure_reason="card_expired", risk_type="payment_failure", amount=74_999.0)
+    d = decide(row, score=0.9, systemic_issues={})
+    assert d.action == "SEND_MESSAGE"
+
+
+def test_value_triage_never_overrides_do_not_contact():
+    row = make_row(amount=500_000.0, do_not_contact=True)
+    d = decide(row, score=0.9, systemic_issues={})
+    assert d.action == "STOP"
+    assert d.stopping_rule_triggered == "do_not_contact"
+
+
+def test_value_triage_never_overrides_systemic_issue_routing():
+    """A genuine bank-side outage still routes to ops, not a human agent,
+    even for a large amount -- the fix there is operational, not a bigger
+    escalation ladder."""
+    row = make_row(amount=500_000.0, payment_method="netbanking", failure_reason="bank_timeout")
+    from agent.root_cause import SystemicIssue
+    issue = SystemicIssue(payment_method="netbanking", failure_reason="bank_timeout",
+                           recent_count=30, recent_rate_per_day=30.0, baseline_rate_per_day=1.0, ratio=30.0)
+    d = decide(row, score=0.9, systemic_issues={("netbanking", "bank_timeout"): issue})
+    assert d.action == "ESCALATE_OPS"
