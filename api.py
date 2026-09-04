@@ -402,8 +402,23 @@ async def razorpay_webhook(request: Request) -> dict:
             customer_contact=customer_contact,
         )
         if link.ok:
-            executed = True
-            execution_detail = {"type": "payment_link", "short_url": link.short_url, "link_id": link.link_id}
+            # Creating the link isn't enough -- a customer who just closed
+            # (or never saw, or never returns to) our checkout page would
+            # otherwise never learn it exists. Email it, the same channel
+            # SEND_MESSAGE already relies on, so recovery doesn't depend on
+            # someone noticing a webpage element behind Razorpay's own
+            # "Retry payment" modal.
+            email = email_sender.send_email(
+                to_address=customer_email,
+                subject="Your payment didn't go through -- here's a link to finish it",
+                body=f"We tried to process your payment again and couldn't reach your bank in time. "
+                     f"You can complete it here: {link.short_url}",
+            )
+            executed = True  # the link itself is real regardless of whether the email also sent
+            execution_detail = {
+                "type": "payment_link", "short_url": link.short_url, "link_id": link.link_id,
+                "emailed": email.ok, "email_error": None if email.ok else email.error,
+            }
         else:
             execution_detail = {"type": "payment_link", "error": link.error}
 

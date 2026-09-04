@@ -659,6 +659,10 @@ with tab_live:
                 if isinstance(execution_detail, dict):
                     if executed and execution_detail.get("type") == "payment_link":
                         st.success(f"A real Razorpay Payment Link was created: {execution_detail.get('short_url')}")
+                        if execution_detail.get("emailed"):
+                            st.caption("✅ Also emailed to the customer, so recovery doesn't depend on them seeing this page.")
+                        else:
+                            st.caption("⚠️ Not emailed -- no email delivery configured for this transaction.")
                     elif executed and execution_detail.get("type") == "email":
                         st.success(f"A real email was sent to {execution_detail.get('sent_to')}")
                     elif execution_detail.get("error"):

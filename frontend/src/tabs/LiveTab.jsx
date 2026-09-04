@@ -97,6 +97,10 @@ function ExecutionStatus({ executed, detail }) {
       <div className="status-box ready" style={{ marginTop: 10 }}>
         {"✅"} A real Razorpay Payment Link was created:{" "}
         <a href={detail.short_url} target="_blank" rel="noopener noreferrer">{detail.short_url}</a>
+        <div style={{ marginTop: 4, fontSize: "0.82rem" }}>
+          {detail.emailed ? "✅ Emailed to the customer, so it doesn't depend on them seeing this page."
+            : `⚠️ Not emailed${detail.email_error ? `: ${detail.email_error}` : " -- no email delivery configured."}`}
+        </div>
       </div>
     );
   }

@@ -202,8 +202,11 @@ async function pollForDecision(paymentId, attempt = 1, maxAttempts = 12) {
     const reasoningHtml = (data.reasoning || []).map(r => `<li>${friendlyReasoning(r)}</li>`).join('');
     let executionHtml = '';
     if (data.executed && data.execution_detail && data.execution_detail.type === 'payment_link') {
+      const emailNote = data.execution_detail.emailed
+        ? `<br><span style="font-size:0.85em;">&#9989; Also emailed to you, so it doesn't depend on this page staying open.</span>`
+        : `<br><span style="font-size:0.85em;">&#9888; Not emailed -- keep this link, it won't be shown again automatically.</span>`;
       executionHtml = `<p style="margin-top:8px;color:#17803d;">&#9989; A real payment link was created: ` +
-        `<a href="${data.execution_detail.short_url}" target="_blank" rel="noopener">${data.execution_detail.short_url}</a></p>`;
+        `<a href="${data.execution_detail.short_url}" target="_blank" rel="noopener">${data.execution_detail.short_url}</a>${emailNote}</p>`;
     } else if (data.executed && data.execution_detail && data.execution_detail.type === 'email') {
       executionHtml = `<p style="margin-top:8px;color:#17803d;">&#9989; A real email was sent to ${data.execution_detail.sent_to}</p>`;
     } else if (data.execution_detail && data.execution_detail.error) {
