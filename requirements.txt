@@ -10,3 +10,4 @@ pytest
 httpx
 fastapi
 uvicorn[standard]
+razorpay
