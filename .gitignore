@@ -10,6 +10,7 @@ data/workflow_state*.db
 data/workflow_audit_log*.jsonl
 data/workflow_daily_summary.csv
 data/_qa_audit_*.jsonl
+data/live_audit_log.jsonl
 __pycache__
 *.egg-info
 .streamlit/secrets.toml

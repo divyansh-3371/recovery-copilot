@@ -133,7 +133,7 @@ for itself as production-minded:
   step by step across simulated days, and a promise-to-pay deadline
   genuinely arrives and gets checked. See the dashboard's "Multi-day
   workflow simulation" section, or run `python simulate_workflow.py`.
-- **`tests/` (32 tests) + `.github/workflows/tests.yml`** — the stopping
+- **`tests/` (127 tests) + `.github/workflows/tests.yml`** — the stopping
   rules, the root-cause detector, the retry sequencer, the promise tracker,
   the simulator's uplift math, and the workflow's state machine all have
   tests; CI runs them on every push.
@@ -145,13 +145,52 @@ for itself as production-minded:
   detail leaked on error — every control verified against a live server,
   not just asserted. See `pitch/security.md` for the full rundown.
 
+## Real Razorpay integration (Test Mode)
+
+Beyond `agent/razorpay_client.py`'s illustrative call-shape mapping, this
+project also has a **real** integration, built against the official
+`razorpay` Python SDK — not a mock:
+
+- **`agent/razorpay_live.py`** — creates real Razorpay orders, verifies a
+  payment's signature on the *backend* before ever trusting a "success"
+  callback from the browser (a frontend-only success is easy to fake — the
+  signature check is what actually proves the payment happened), and
+  verifies real webhook signatures (HMAC-SHA256 against the raw request
+  body, using `hmac.compare_digest`-based comparison inside the SDK).
+- **`checkout.html` + `api.py`'s `/checkout/create-order` and
+  `/checkout/verify`** — a real Razorpay Checkout flow: the frontend only
+  ever sees the public Key ID, the backend holds the Key Secret and does
+  the signature verification.
+- **`api.py`'s `/webhooks/razorpay`** — the actual real-time path: when a
+  real Razorpay payment fails, Razorpay's servers call this endpoint
+  directly (no dashboard click, no polling), and a verified event is
+  scored and decided by the *exact same* classifier/policy pipeline used
+  everywhere else in this project, then written to `data/live_audit_log.jsonl`.
+  This is what makes the earlier "is it doing real-time processing"
+  question concretely true once a Razorpay account is connected, rather
+  than only true of the synthetic-batch pipeline.
+
+Fully covered by tests that don't need live credentials — the signature
+math is the same HMAC-SHA256 Razorpay's SDK uses internally, so
+`tests/test_razorpay_live.py` constructs real valid/tampered signatures
+itself and proves the wrapper accepts/rejects them correctly;
+`tests/test_razorpay_webhook_api.py` drives a genuinely-signed
+`payment.failed` webhook through the live FastAPI app end-to-end and
+checks the resulting decision and audit entry. The one thing that
+genuinely can't be tested without a live account is the outbound
+`order.create()` HTTP call itself — see **`pitch/razorpay_live_setup.md`**
+for the ~10-minute account setup (Test Mode keys, an `ngrok` tunnel,
+webhook registration) that turns this on for real, plus what it does and
+doesn't prove.
+
 ## Tech stack
 
 Pure Python: `pandas` / `numpy` for data, `scikit-learn` for the recoverability
 model, `Streamlit` + `Plotly` for the dashboard, `anthropic` (optional, with a
 graceful template fallback) for message generation, `pyttsx3` for fully
 offline text-to-speech on the Hinglish voice channel, `sqlite3` (stdlib) for
-workflow state, `pytest` for tests, `fastapi`/`uvicorn` for the service layer.
+workflow state, `pytest` for tests, `fastapi`/`uvicorn` for the service layer,
+`razorpay` (official SDK) for real order creation and signature verification.
 
 ## Running it
 
@@ -172,11 +211,18 @@ streamlit run app.py
 
 # API service
 uvicorn api:app --reload
+
+# Real Razorpay checkout, once configured (see pitch/razorpay_live_setup.md)
+# open http://localhost:8000/checkout
 ```
 
 Optional: set `ANTHROPIC_API_KEY` in your environment for LLM-generated
 recovery messages; without it, the messenger falls back to a clean
-deterministic template so the demo never breaks.
+deterministic template so the demo never breaks. Optional: set
+`RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` / `RAZORPAY_WEBHOOK_SECRET` to
+turn on the real Razorpay checkout + webhook path (`pitch/razorpay_live_setup.md`);
+without them, `/checkout/*` clearly reports "not configured" and nothing
+else in the app changes.
 
 ## What's real vs. simulated
 
@@ -185,14 +231,28 @@ This is a buildathon MVP, built honestly:
   rules, the audit trail, the root-cause anomaly detector, the LLM message
   generation, the offline TTS, the multi-day state machine, the test suite,
   the API service.
-- **Simulated:** the transaction data itself and whether an intervention
+- **Also real, when a Razorpay account is connected (`agent/razorpay_live.py`,
+  see the section above):** order creation, backend payment-signature
+  verification, and webhook-signature-verified real-time processing of
+  actual `payment.failed` events through the real classifier/policy
+  pipeline. This is opt-in — with no `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET`/
+  `RAZORPAY_WEBHOOK_SECRET` set, `/checkout/*` clearly reports "not
+  configured" and every test/demo path above still works unchanged.
+- **Simulated:** the batch transaction data and whether an intervention
   "succeeds" — both come from `data/generate_data.py`, which encodes a hidden
   ground-truth recoverability prior never seen by the agent, used only by
   `agent/simulator.py` (and `agent/workflow.py`, day by day) to resolve
   realistic outcomes. In production this batch would be a merchant's real
   failed-transaction feed and the training data would be their real
-  resolved-case history; the Razorpay API calls in `agent/razorpay_client.py`
-  are stubs illustrating integration shape, not live calls.
+  resolved-case history.
+- **Still a stub, deliberately:** `agent/razorpay_client.py` maps a
+  *decision* (`RETRY_PAYMENT`, `SEND_MESSAGE`, ...) to the Razorpay API call
+  it would trigger, for the dashboard's drill-down — it shows the call
+  shape but doesn't fire it. The live webhook path above decides in real
+  time; actually executing that decision (firing a real retry, sending a
+  real SMS) is the natural next step once retry/notification credentials
+  are also in place — see the "Not yet built" note in
+  `pitch/razorpay_live_setup.md`.
 
 ## Project structure
 
@@ -207,7 +267,8 @@ agent/promise_tracker.py  promise-to-pay classification
 agent/cost_model.py       estimated cost per intervention action
 agent/policy.py           decision engine + stopping rules
 agent/messenger.py        message generation (LLM + template, tone escalates with attempt #) + offline TTS
-agent/razorpay_client.py  action -> Razorpay API call stub mapping
+agent/razorpay_client.py  action -> Razorpay API call stub mapping (illustrative, no network)
+agent/razorpay_live.py    real Razorpay SDK wrapper: orders, signature verification, webhook mapping
 agent/audit.py            append-only audit trail
 agent/simulator.py        outcome simulation + baseline comparison + net-recovered math
 agent/state_store.py      SQLite persistence for the multi-day workflow
@@ -216,10 +277,11 @@ agent/pipeline.py         single-pass orchestrator
 run_batch.py              CLI: single-pass batch run
 simulate_workflow.py      CLI: multi-day workflow simulation
 app.py                    Streamlit dashboard
-api.py                    FastAPI service (/decide, /batch/demo)
-tests/                    pytest suite (75 tests)
+api.py                    FastAPI service (/decide, /batch/demo, /checkout/*, /webhooks/razorpay)
+checkout.html             real Razorpay Checkout frontend (served at GET /checkout)
+tests/                    pytest suite (127 tests)
 .github/workflows/        CI: runs the test suite on every push
-pitch/                    architecture doc, pitch script, build-challenges log
+pitch/                    architecture doc, pitch script, build-challenges log, live-Razorpay setup guide
 ```
 
 ## Build challenges & how they were resolved
