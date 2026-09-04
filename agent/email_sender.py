@@ -66,7 +66,15 @@ def send_email(to_address: str, subject: str, body: str) -> EmailResult:
 
     req = urllib.request.Request(
         RESEND_API_URL, data=payload, method="POST",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
+            # Resend's API sits behind Cloudflare, whose bot-protection
+            # blocks Python's default urllib User-Agent (a very common,
+            # well-documented false positive for legitimate API clients --
+            # confirmed here as a real Cloudflare error 1010, not a Resend
+            # auth/validation error).
+            "User-Agent": "recovery-copilot/1.0 (+https://github.com/divyansh-3371/recovery-copilot)",
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
