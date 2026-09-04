@@ -3,15 +3,27 @@ Append-only audit trail. Every action the agent takes — including deciding to
 do nothing — gets one JSON line here, with a full reasoning trace and a
 timestamp. This is what lets a compliance reviewer (or a judge) reconstruct
 exactly why the agent did what it did for any single transaction.
+
+The default path is a single shared file, and it's written from more than
+one process in normal use -- the live dashboard on its own writes here, and
+so does every CLI run (run_batch.py, simulate_workflow.py) unless told
+otherwise. If a reset() (which truncates the file) lands mid-read from
+another process, the reader can observe a torn/partial line -- this is what
+crashed the dashboard the first time it happened (see build_challenges.md
+#14). load_all() is defensive about this: a line that fails to parse is
+skipped, not fatal to the whole audit trail.
 """
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
 
 import pandas as pd
+
+logger = logging.getLogger("recovery_copilot.audit")
 
 DEFAULT_LOG_PATH = "data/audit_log.jsonl"
 
@@ -49,11 +61,25 @@ class AuditTrail:
         if not os.path.exists(self.path):
             return pd.DataFrame()
         rows = []
-        with open(self.path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    rows.append(json.loads(line))
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError:
+            return pd.DataFrame()
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                # a torn/partial line -- most likely another process's
+                # reset() truncated this file mid-read (see the module
+                # docstring). Skip it rather than let one bad line take
+                # down the whole audit trail.
+                logger.warning("Skipping unparseable audit log line in %s", self.path)
+                continue
         return pd.DataFrame(rows)
 
     def for_transaction(self, transaction_id: str) -> pd.DataFrame:
