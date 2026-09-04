@@ -55,11 +55,14 @@ from typing import Literal
 
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
-from agent import razorpay_live
+import dashboard_api
+from agent import email_sender, razorpay_live
 from agent.audit import AuditTrail
+from agent.messenger import generate_message
 from agent.classifier import RecoverabilityModel, train_default_model
 from agent.pipeline import run_pipeline
 from agent.policy import decide as policy_decide
@@ -111,6 +114,24 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# CORS: the React dashboard (frontend/) runs on its own dev-server origin
+# and needs to read responses from this API. This is a deliberate, scoped
+# change from the earlier "no CORS" stance -- that stance held while nothing
+# legitimate needed cross-origin access; now something does, so it's scoped
+# to exactly the known local dev origins (Vite's default 5173, plus 3000 as
+# a common alternative), never allow_origins=["*"].
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:3000", "http://127.0.0.1:3000",
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-API-Key"],
+)
+
+app.include_router(dashboard_api.router)
 
 
 @app.middleware("http")
@@ -358,6 +379,47 @@ async def razorpay_webhook(request: Request) -> dict:
     score = float(model.predict_proba(pd.DataFrame([row]))[0])
     decision = policy_decide(row, score, systemic_issues={})
 
+    # --- execution -----------------------------------------------------
+    # Turns the decision into a real action, for the two cases where one
+    # is actually buildable right now: RETRY_PAYMENT creates a real,
+    # payable Razorpay Payment Link (same connected account, no new
+    # credential); SEND_MESSAGE sends a real email (Gmail SMTP + app
+    # password). Deliberately only reachable from here -- the real webhook
+    # path -- never from /dashboard/try or /decide, which run on synthetic
+    # data with no real email address to send to in the first place.
+    executed = False
+    execution_detail: dict | None = None
+    message_text: str | None = None
+    customer_email = payment_entity.get("email")
+    customer_contact = payment_entity.get("contact")
+
+    if decision.action == "RETRY_PAYMENT":
+        link = razorpay_live.create_payment_link(
+            amount_rupees=row_dict["amount"],
+            description=f"Retry payment -- {row_dict['transaction_id']}",
+            customer_name=row_dict["customer_name"],
+            customer_email=customer_email,
+            customer_contact=customer_contact,
+        )
+        if link.ok:
+            executed = True
+            execution_detail = {"type": "payment_link", "short_url": link.short_url, "link_id": link.link_id}
+        else:
+            execution_detail = {"type": "payment_link", "error": link.error}
+
+    elif decision.action == "SEND_MESSAGE":
+        message_text = generate_message(row, decision)
+        email = email_sender.send_email(
+            to_address=customer_email,
+            subject="Let's get your payment sorted",
+            body=message_text,
+        )
+        if email.ok:
+            executed = True
+            execution_detail = {"type": "email", "sent_to": customer_email}
+        else:
+            execution_detail = {"type": "email", "error": email.error}
+
     _live_audit.log(
         transaction_id=row_dict["transaction_id"],
         action=decision.action,
@@ -373,10 +435,16 @@ async def razorpay_webhook(request: Request) -> dict:
             "raw_error_reason": raw_error_reason,
             "raw_error_code": raw_error_code,
             "raw_error_description": raw_error_description,
+            "executed": executed,
+            "execution_detail": execution_detail,
+            "message": message_text,
         },
     )
 
-    return {"status": "processed", "action": decision.action, "recoverability_score": score}
+    return {
+        "status": "processed", "action": decision.action, "recoverability_score": score,
+        "executed": executed, "execution_detail": execution_detail,
+    }
 
 
 @app.get("/checkout/decision/{payment_id}")
@@ -395,6 +463,8 @@ def checkout_decision(payment_id: str) -> dict:
         return {"found": False}
     row = entry.iloc[-1]  # last entry for this id, in case of a retry/replay
     score = row.get("recoverability_score")
+    executed = row.get("executed")
+    execution_detail = row.get("execution_detail")
     return {
         "found": True,
         # cast off numpy/pandas scalar types explicitly -- they aren't
@@ -404,4 +474,6 @@ def checkout_decision(payment_id: str) -> dict:
         "reasoning": list(row.get("reasoning")) if isinstance(row.get("reasoning"), (list, tuple)) else [],
         "recoverability_score": float(score) if score is not None and not pd.isna(score) else None,
         "failure_reason": str(row.get("failure_reason")) if row.get("failure_reason") is not None else None,
+        "executed": bool(executed) if isinstance(executed, (bool,)) else False,
+        "execution_detail": execution_detail if isinstance(execution_detail, dict) else None,
     }
