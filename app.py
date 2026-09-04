@@ -53,6 +53,17 @@ RISK_TYPE_LABEL = {
     "subscription_failure": "Subscription failures",
     "invoice_overdue": "Overdue invoices",
 }
+# plain-language phrase for each systemic-issue failure reason -- without
+# this, two DIFFERENT netbanking issues (e.g. bank_timeout vs
+# mandate_bank_error) both read as "netbanking payments are failing" with
+# just a different multiplier, which looks like the same fact contradicting
+# itself rather than two distinct problems
+SYSTEMIC_REASON_PHRASE = {
+    "bank_timeout": "timing out",
+    "network_drop": "dropping mid-payment",
+    "mandate_bank_error": "erroring on auto-pay (mandate) charges",
+    "issuer_declined": "being declined by the issuing bank",
+}
 
 st.set_page_config(page_title="Recovery Copilot", page_icon="\U0001F4B8", layout="wide")
 
@@ -508,8 +519,9 @@ with tab_merchant:
         with st.container(border=True):
             st.markdown("#### ⚠️ Heads up")
             for issue in systemic_issues.values():
+                phrase = SYSTEMIC_REASON_PHRASE.get(issue.failure_reason, issue.failure_reason.replace("_", " "))
                 st.markdown(
-                    f"Your **{issue.payment_method}** payments are failing more than usual right now "
+                    f"Your **{issue.payment_method}** payments are **{phrase}** more than usual right now "
                     f"({issue.ratio:.0f}x normal) — this looks like a bank/gateway issue, not your customers. "
                     f"We've paused retries for these and alerted your ops team so nobody gets spammed during the outage."
                 )
