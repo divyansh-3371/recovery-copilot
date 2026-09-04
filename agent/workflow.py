@@ -34,7 +34,7 @@ from agent.simulator import agent_outcome_multiplier
 from agent.state_store import DB_PATH, connect, get_state, init_states, reset, update_state
 
 SYSTEMIC_ISSUE_CLEARS_AFTER_DAY = 1
-ATTEMPT_ACTIONS = {"RETRY_PAYMENT", "SEND_MESSAGE", "ESCALATE_HUMAN"}
+ATTEMPT_ACTIONS = {"RETRY_PAYMENT", "SEND_MESSAGE", "ESCALATE_HUMAN", "ESCALATE_COLLECTIONS"}
 
 # Idempotency / guardrail: a customer can pay through a channel the agent
 # never touched -- their own banking app, a direct UPI payment, walking into
@@ -44,6 +44,13 @@ ATTEMPT_ACTIONS = {"RETRY_PAYMENT", "SEND_MESSAGE", "ESCALATE_HUMAN"}
 # path and, when it fires, cancels every remaining scheduled action for
 # that transaction with an explicit audit entry -- not just an implicit
 # side effect of the "skip if resolved" loop guard below.
+#
+# Deliberately checked for TERMINAL transactions too (do-not-contact,
+# max-attempts, uneconomical-amount, exhausted-sequence, low-confidence
+# stops), not just actively-worked ones: stopping our own actions doesn't
+# stop the customer from being *able* to pay through another channel, and a
+# transaction we gave up chasing should still count as recovered if it
+# resolves on its own -- otherwise that revenue is silently undercounted.
 INDEPENDENT_PAY_BASE_PROB = 0.03
 INDEPENDENT_PAY_SCORE_WEIGHT = 0.05
 
@@ -75,7 +82,7 @@ def run_workflow(
 
             for txn_id in by_id.index:
                 state = get_state(conn, txn_id)
-                if state["terminal"] or state["resolved"]:
+                if state["resolved"]:
                     continue
 
                 row = by_id.loc[txn_id].copy()
@@ -86,18 +93,30 @@ def run_workflow(
                 # was last scheduled for them? Checked BEFORE deciding today's
                 # action -- an agent that decides first and checks reality
                 # second is the one that keeps hounding someone who already paid.
+                # Runs even for terminal transactions (see module docstring) --
+                # only actually-resolved transactions are skipped, above.
                 independent_pay_prob = INDEPENDENT_PAY_BASE_PROB + INDEPENDENT_PAY_SCORE_WEIGHT * row["_true_recoverable_prob"]
                 if bool(rng.random() < independent_pay_prob):
                     update_state(conn, txn_id, resolved=1, recovered_amount=row["amount"],
                                  last_action="INDEPENDENT_PAYMENT_DETECTED", last_updated_day=day)
+                    if state["terminal"]:
+                        note = (f"Customer paid independently through another channel -- previously stopped "
+                                f"('{state['terminal_reason']}'), but this still counts as recovered.")
+                    else:
+                        note = ("Customer paid independently through another channel -- "
+                                 "cancelling all remaining scheduled recovery actions for this transaction.")
                     audit.log(
-                        transaction_id=txn_id, action="IDEMPOTENT_CANCEL",
-                        reasoning=["Customer paid independently through another channel -- "
-                                   "cancelling all remaining scheduled recovery actions for this transaction."],
-                        extra={"day": day, "failure_reason": row["failure_reason"]},
+                        transaction_id=txn_id, action="IDEMPOTENT_CANCEL", reasoning=[note],
+                        extra={"day": day, "failure_reason": row["failure_reason"], "was_terminal": bool(state["terminal"])},
                     )
                     day_recovered += row["amount"]
                     day_new_resolutions += 1
+                    continue
+
+                if state["terminal"]:
+                    # no new agent action -- we already stopped acting on
+                    # this one -- but the independent-payment check above
+                    # still ran, which is the whole point of reaching here
                     continue
 
                 score = float(model.predict_proba(pd.DataFrame([row]))[0])
