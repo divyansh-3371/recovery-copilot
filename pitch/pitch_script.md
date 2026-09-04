@@ -18,7 +18,7 @@ Timing is a guide, not a script to read verbatim — say it in your own words.
 > "It's a Python agent pipeline: a trained recoverability model scores every
 > at-risk transaction, a root-cause detector watches for infrastructure
 > outages so we don't blame the customer for the bank's problem, a policy
-> engine picks one of five bounded actions under strict stopping rules, and
+> engine picks one of six bounded actions under strict stopping rules, and
 > every single decision is logged to a full audit trail. Then a simulator
 > proves the ₹ impact against a naive baseline on the same batch."
 

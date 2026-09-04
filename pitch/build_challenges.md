@@ -263,3 +263,42 @@ the attempt number and target tone explicitly). Verified live: attempts
 0/1/2 on the identical transaction produce visibly different text ("Hi
 Test, your payment didn't go through..." -> "just a quick follow-up..." ->
 "this is a final reminder..."), not just different in theory. 5 new tests.
+
+## 16. A "snooze and re-score" idea turned out to be theater -- the real gap was elsewhere
+
+**Problem:** asked whether the 5-action, 14-path decision space was missing
+anything. Two real gaps: no distinct action for severely-overdue B2B
+collections (conflated with ordinary human escalation), and a `STOP`'d
+transaction's score never gets revisited even though the agent gave up on
+it.
+
+**The second one didn't hold up under scrutiny.** Every feature feeding a
+never-acted-on transaction's score (amount, segment, attempts, reason) is
+static -- re-running the identical score computation tomorrow produces the
+identical number. There is no real information a "re-score" would ever
+pick up; faking a reason for the number to drift would be adding noise for
+the appearance of sophistication, not a real fix. Caught this by tracing
+through what would actually be different on re-evaluation, not by building
+it first and finding out.
+
+**The real gap, found in the same investigation:** a `STOP`'d transaction
+was skipped by the workflow loop entirely -- including the independent-
+payment check -- so a customer who paid on their own through another
+channel *after* the agent gave up on them was never noticed, silently
+undercounting real recovered revenue. That's a genuine, fixable gap, and a
+different one from what was originally proposed.
+
+**Fix:** `agent/policy.py` gained `ESCALATE_COLLECTIONS` -- a severely
+overdue (45+ day), high-value invoice now routes to formal collections/
+legal (higher cost, distinct from a recovery agent's outreach) instead of
+being folded into `ESCALATE_HUMAN`, checked ahead of the generic value-
+triage catch-all so the more specific routing wins. `agent/workflow.py`'s
+loop now separates "should we still watch for organic payment" (yes,
+always, until actually resolved) from "should the agent take a new
+action" (no, once terminal) -- previously conflated into one guard clause.
+Verified on the real batch: 30 of 625 transactions in a 5-day run were
+stopped early *and* later resolved independently -- real revenue that was
+being silently missed before this fix, not a hypothetical. 7 new tests.
+Lesson: when a proposed fix doesn't survive tracing through what data
+would actually change, that's a signal to look for the real gap
+underneath it rather than build the theater anyway.

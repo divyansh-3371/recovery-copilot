@@ -19,7 +19,7 @@ recompute in real time — nothing on this dashboard is pre-baked.
 | Demonstrate measured money recovered from a batch of transactions | `agent/simulator.py` runs the agent's decisions *and* a naive baseline over the same batch and reports the real ₹ delta — see the dashboard's KPI row |
 | Compliant escalation procedures with stopping rules | `agent/policy.py` — do-not-contact, max-attempt cap, uneconomical-amount floor, quiet-hours deferral, all checked before any customer-facing action |
 | Complete audit trail for all actions | `agent/audit.py` — one JSON line per decision, with full reasoning, written to `data/audit_log.jsonl` |
-| Move beyond detection to actual recovery execution | The policy engine doesn't just flag risk — it picks a concrete action (`RETRY_PAYMENT`, `SEND_MESSAGE`, `ESCALATE_HUMAN`, `ESCALATE_OPS`, `STOP`) and the simulator resolves its real outcome |
+| Move beyond detection to actual recovery execution | The policy engine doesn't just flag risk — it picks a concrete action (`RETRY_PAYMENT`, `SEND_MESSAGE`, `ESCALATE_HUMAN`, `ESCALATE_COLLECTIONS`, `ESCALATE_OPS`, `STOP`) and the simulator resolves its real outcome |
 
 ## Coverage of the track's example directions
 
