@@ -37,6 +37,15 @@ HIGH_VALUE_AMOUNT = 20000.0
 MAX_ATTEMPTS = 3
 QUIET_HOURS = set(range(22, 24)) | set(range(0, 8))
 
+# Cost-aware value triage: above this amount, a human reviews it regardless
+# of what the failure-reason mapping would otherwise pick -- a ₹50 nudge-vs-
+# retry decision is fine to leave to a rule; a ₹1,00,000 one is worth the
+# ₹150 human-agent cost even if the reason category would normally route to
+# an automated channel. Checked after compliance-critical routing (stopping
+# rules, systemic-issue/ops routing, risk-block review) so those still win,
+# but before every other failure-reason-driven branch.
+VALUE_TRIAGE_THRESHOLD = 75_000.0
+
 # kept as an alias -- simulator.py and existing callers refer to this name;
 # the actual data now lives in agent/decision_table.py
 CARD_UPDATE_REASONS = CUSTOMER_ACTION_REASONS
@@ -107,6 +116,16 @@ def decide(row: pd.Series, score: float, systemic_issues: dict[tuple[str, str], 
         d.reasoning.append(
             f"Failure reason '{row['failure_reason']}' is a risk/fraud-engine signal — "
             f"auto-retrying past it would itself be a compliance risk. Routing to human review, no auto-retry, no customer message."
+        )
+
+    # --- cost-aware value triage: too much at stake to leave to the usual
+    # failure-reason mapping, regardless of which category it would pick ---
+    elif row["amount"] >= VALUE_TRIAGE_THRESHOLD:
+        d.action = "ESCALATE_HUMAN"
+        d.reasoning.append(
+            f"Amount ₹{row['amount']:,.0f} is above the ₹{VALUE_TRIAGE_THRESHOLD:,.0f} value-triage threshold — "
+            f"routed to a human regardless of the usual failure-reason mapping (this would otherwise have been "
+            f"an automated retry/message for '{row['failure_reason']}'); too much at stake for an automated path alone."
         )
 
     # --- card needs updating: never blind-retry, always ask the customer ---
