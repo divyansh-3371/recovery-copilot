@@ -30,3 +30,10 @@ def test_message_cost_varies_by_channel():
 
 def test_baseline_cost_is_flat_and_positive():
     assert BASELINE_ACTION_COST > 0
+
+
+def test_collections_costs_more_than_a_human_agent():
+    """Formal collections/legal referral has higher overhead than a
+    recovery agent's outreach -- reflected in the cost model, not just the
+    business-logic framing."""
+    assert estimate_cost(_decision("ESCALATE_COLLECTIONS")) > estimate_cost(_decision("ESCALATE_HUMAN"))

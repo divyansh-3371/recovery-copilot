@@ -134,6 +134,45 @@ def test_value_triage_never_overrides_do_not_contact():
     assert d.stopping_rule_triggered == "do_not_contact"
 
 
+def test_collections_routes_severely_overdue_high_value_invoice():
+    row = make_row(risk_type="invoice_overdue", failure_reason="invoice_overdue_45plus", amount=20_000.0)
+    d = decide(row, score=0.5, systemic_issues={})
+    assert d.action == "ESCALATE_COLLECTIONS"
+
+
+def test_collections_does_not_apply_below_its_threshold():
+    """A small severely-overdue invoice still isn't worth formal
+    collections -- falls through to the normal reason/score-based routing."""
+    row = make_row(risk_type="invoice_overdue", failure_reason="invoice_overdue_45plus", amount=5_000.0)
+    d = decide(row, score=0.5, systemic_issues={})
+    assert d.action != "ESCALATE_COLLECTIONS"
+
+
+def test_collections_does_not_apply_to_other_overdue_tiers():
+    """Only the 45+ day tier goes to collections -- 15/30 day overdue
+    invoices are still just a follow-up nudge, not formal collections."""
+    row = make_row(risk_type="invoice_overdue", failure_reason="invoice_overdue_15d", amount=20_000.0)
+    d = decide(row, score=0.5, systemic_issues={})
+    assert d.action != "ESCALATE_COLLECTIONS"
+
+
+def test_collections_beats_generic_value_triage_when_both_apply():
+    """A severely overdue invoice big enough to also clear the generic
+    value-triage threshold should still get the more specific collections
+    routing, not the generic human-escalation one."""
+    row = make_row(risk_type="invoice_overdue", failure_reason="invoice_overdue_45plus", amount=200_000.0)
+    d = decide(row, score=0.5, systemic_issues={})
+    assert d.action == "ESCALATE_COLLECTIONS"
+
+
+def test_collections_still_respects_stopping_rules_first():
+    row = make_row(risk_type="invoice_overdue", failure_reason="invoice_overdue_45plus",
+                    amount=200_000.0, do_not_contact=True)
+    d = decide(row, score=0.5, systemic_issues={})
+    assert d.action == "STOP"
+    assert d.stopping_rule_triggered == "do_not_contact"
+
+
 def test_value_triage_never_overrides_systemic_issue_routing():
     """A genuine bank-side outage still routes to ops, not a human agent,
     even for a large amount -- the fix there is operational, not a bigger
