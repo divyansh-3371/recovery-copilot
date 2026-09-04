@@ -44,6 +44,7 @@ ACTION_LABEL = {
     "SEND_MESSAGE": "Sent a nudge",
     "RETRY_PAYMENT": "Retried the payment",
     "ESCALATE_HUMAN": "Escalated to a human agent",
+    "ESCALATE_COLLECTIONS": "Sent to collections/legal",
     "ESCALATE_OPS": "Flagged to ops (system issue)",
     "STOP": "Left alone (not worth pursuing)",
 }
@@ -165,9 +166,10 @@ with tab_live:
         live_dnc = st.checkbox("Customer opted out (do-not-contact)", key="live_dnc")
         st.caption("Tip: set attempts to 3+ to see the max-attempts stopping rule fire, "
                    "pick a (payment method, reason) pair matching a banner on the "
-                   "Overview tab to see it route to ops instead of the customer, or push "
+                   "Overview tab to see it route to ops instead of the customer, push "
                    "the amount above ₹75,000 on any reason to see value-based triage "
-                   "override the usual routing to a human agent.")
+                   "override the usual routing to a human agent, or pick Overdue invoices "
+                   "→ invoice_overdue_45plus above ₹15,000 to see it route to collections/legal instead.")
 
     live_row = pd.Series({
         "transaction_id": "live_test_0001",
