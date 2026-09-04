@@ -377,3 +377,31 @@ async def razorpay_webhook(request: Request) -> dict:
     )
 
     return {"status": "processed", "action": decision.action, "recoverability_score": score}
+
+
+@app.get("/checkout/decision/{payment_id}")
+def checkout_decision(payment_id: str) -> dict:
+    """Lets checkout.html show the agent's decision right at the moment of
+    failure, on the same page the customer is looking at -- polled after a
+    payment.failed event fires client-side, since the webhook (and the
+    decision it triggers) typically lands within a few seconds, not
+    instantly. There's no way to show this inside Razorpay's own hosted
+    dashboard -- it has no extension point for a third party's business
+    logic -- so this is the realistic version of "visible at payment time":
+    on the merchant's own page, which is where a real integration would
+    put it anyway."""
+    entry = _live_audit.for_transaction(payment_id)
+    if entry.empty:
+        return {"found": False}
+    row = entry.iloc[-1]  # last entry for this id, in case of a retry/replay
+    score = row.get("recoverability_score")
+    return {
+        "found": True,
+        # cast off numpy/pandas scalar types explicitly -- they aren't
+        # JSON-serializable by the plain json module FastAPI's default
+        # response class uses
+        "action": str(row.get("action")) if row.get("action") is not None else None,
+        "reasoning": list(row.get("reasoning")) if isinstance(row.get("reasoning"), (list, tuple)) else [],
+        "recoverability_score": float(score) if score is not None and not pd.isna(score) else None,
+        "failure_reason": str(row.get("failure_reason")) if row.get("failure_reason") is not None else None,
+    }

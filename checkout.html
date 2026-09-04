@@ -37,6 +37,18 @@
     display: inline-block; font-size: 0.72rem; font-weight: 700; padding: 3px 8px;
     border-radius: 999px; background: #fff3cd; color: #8a6300; margin-bottom: 16px;
   }
+  #decision { margin-top: 14px; padding: 14px 16px; border-radius: 10px; display: none; }
+  #decision.show { display: block; }
+  #decision.thinking { background: #f4f6f9; border: 1px solid #d5dce3; }
+  #decision.ready { background: #eefaf1; border: 1px solid #b7e4c7; }
+  #decision.timeout { background: #fdf3f0; border: 1px solid #f0c4b8; }
+  #decision h3 { margin: 0 0 6px; font-size: 0.95rem; }
+  #decision ul { margin: 6px 0 0; padding-left: 18px; font-size: 0.85rem; color: #33424f; }
+  .spinner {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    background: #eb6834; margin-right: 6px; animation: pulse 1s infinite ease-in-out;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 </style>
 </head>
 <body>
@@ -46,8 +58,7 @@
   <p class="sub">
     This is a real Razorpay Test Mode payment (no real money moves). Use a
     <a href="https://razorpay.com/docs/payments/payments/test-card-upi-details/" target="_blank" rel="noopener">documented test failure card</a>
-    to see the failure flow live into Recovery Copilot's agent -- check the
-    dashboard or <code>data/live_audit_log.jsonl</code> right after.
+    to see the failure flow live into Recovery Copilot's agent, right here, seconds after it fails.
   </p>
   <label for="amount">Amount (INR)</label>
   <input id="amount" type="number" value="500" min="1" step="1">
@@ -59,6 +70,7 @@
   </select>
   <button id="pay-btn">Pay with Razorpay</button>
   <div id="status" class="status-info"></div>
+  <div id="decision"></div>
 </div>
 
 <script>
@@ -148,16 +160,61 @@ payBtn.onclick = async function () {
 
   const rzp = new Razorpay(options);
   rzp.on('payment.failed', function (response) {
-    setStatus(
-      'Payment failed: ' + response.error.description +
-      '\n\nRazorpay just sent Recovery Copilot a webhook for this -- open the dashboard ' +
-      'or data/live_audit_log.jsonl to see the agent\'s real-time decision on it.',
-      'status-error'
-    );
+    setStatus('Payment failed: ' + response.error.description, 'status-error');
     payBtn.disabled = false;
+    const paymentId = response.error && response.error.metadata && response.error.metadata.payment_id;
+    if (paymentId) {
+      pollForDecision(paymentId);
+    } else {
+      showDecisionBox('timeout', 'Payment failed, but no payment ID was available to look up the decision.');
+    }
   });
   rzp.open();
 };
+
+const ACTION_LABEL = {
+  SEND_MESSAGE: 'Sent a reminder', RETRY_PAYMENT: 'Retried the payment',
+  ESCALATE_HUMAN: 'Sent to a specialist', ESCALATE_COLLECTIONS: 'Sent to collections/legal',
+  ESCALATE_OPS: 'Flagged as a system issue', STOP: 'Left alone (not worth pursuing)',
+};
+
+function friendlyReasoning(text) {
+  return text.replace(/[Rr]ecoverability score \(?(\d+\.\d+)\)?/, (m, p1) => `Confidence (${Math.round(parseFloat(p1) * 100)}%)`);
+}
+
+function showDecisionBox(cls, html) {
+  const box = document.getElementById('decision');
+  box.className = 'show ' + cls;
+  box.innerHTML = html;
+}
+
+async function pollForDecision(paymentId, attempt = 1, maxAttempts = 12) {
+  showDecisionBox('thinking', `<span class="spinner"></span>Waiting for Recovery Copilot's decision on this failure&hellip; (Razorpay's webhook usually lands within a few seconds)`);
+  let data;
+  try {
+    const resp = await fetch(`/checkout/decision/${paymentId}`);
+    data = await resp.json();
+  } catch (err) {
+    data = { found: false };
+  }
+  if (data.found) {
+    const actionLabel = ACTION_LABEL[data.action] || data.action;
+    const reasoningHtml = (data.reasoning || []).map(r => `<li>${friendlyReasoning(r)}</li>`).join('');
+    showDecisionBox('ready',
+      `<h3>Recovery Copilot's decision: <strong>${actionLabel}</strong></h3>` +
+      (reasoningHtml ? `<ul>${reasoningHtml}</ul>` : '')
+    );
+    return;
+  }
+  if (attempt >= maxAttempts) {
+    showDecisionBox('timeout',
+      `No decision showed up after ${(maxAttempts * 1.5).toFixed(0)}s -- the webhook may not have reached this server yet ` +
+      `(check the tunnel is still up), or it's still on its way. Check the dashboard's Live tab shortly.`
+    );
+    return;
+  }
+  setTimeout(() => pollForDecision(paymentId, attempt + 1, maxAttempts), 1500);
+}
 </script>
 </body>
 </html>

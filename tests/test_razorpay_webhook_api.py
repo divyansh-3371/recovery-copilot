@@ -225,3 +225,39 @@ def test_webhook_replayed_tampered_body_is_rejected(client, monkeypatch):
     tampered_body = json.dumps({"event": "payment.captured", "payload": {}}).encode()
     resp = client.post("/webhooks/razorpay", content=tampered_body, headers={"X-Razorpay-Signature": sig})
     assert resp.status_code == 400
+
+
+# --- /checkout/decision/{payment_id} -----------------------------------------
+
+def test_decision_not_found_for_unknown_payment_id(client):
+    resp = client.get("/checkout/decision/pay_never_happened")
+    assert resp.status_code == 200
+    assert resp.json() == {"found": False}
+
+
+def test_decision_found_after_a_real_webhook(client, monkeypatch):
+    """The polling endpoint checkout.html relies on -- after a genuine
+    webhook has been processed, its decision must be look-up-able by
+    payment_id, with plain JSON-serializable types (this is what would
+    break on a raw numpy/pandas scalar leaking through)."""
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", "whsec_test")
+    payload = {
+        "event": "payment.failed",
+        "payload": {"payment": {"entity": {
+            "id": "pay_POLLME001", "amount": 100000, "currency": "INR",
+            "method": "card", "email": "poll@example.com", "error_reason": "payment_failed",
+        }}},
+    }
+    body = json.dumps(payload).encode()
+    sig = _sign("whsec_test", body.decode())
+    webhook_resp = client.post("/webhooks/razorpay", content=body, headers={"X-Razorpay-Signature": sig})
+    assert webhook_resp.status_code == 200
+
+    resp = client.get("/checkout/decision/pay_POLLME001")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["found"] is True
+    assert isinstance(data["action"], str)
+    assert isinstance(data["reasoning"], list)
+    assert isinstance(data["recoverability_score"], float)
+    assert data["action"] == webhook_resp.json()["action"]

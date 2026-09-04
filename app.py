@@ -15,6 +15,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 from agent.audit import AuditTrail
 from agent.classifier import train_default_model
@@ -570,6 +571,27 @@ with tab_live:
         "involved in between."
     )
 
+    if "api_base_url" not in st.session_state:
+        st.session_state["api_base_url"] = "http://localhost:8010"
+
+    with st.expander("\U0001F4B3 Make a real transaction", expanded=True):
+        st.caption(
+            "A real Razorpay Test Mode checkout, embedded directly — no real money moves. Pick a "
+            "customer type, pay with any card, or use one of "
+            "[Razorpay's test failure cards](https://razorpay.com/docs/payments/payments/test-card-details/) "
+            "to see a real failure flow through the agent below, live."
+        )
+        api_base = st.text_input(
+            "API service URL", key="api_base_url",
+            help="Where `uvicorn api:app` is running — change this if you started it on a different port.",
+        )
+        if api_base:
+            components.iframe(src=f"{api_base.rstrip('/')}/checkout", height=760, scrolling=True)
+        st.caption(
+            "Can't reach it? Make sure the API service is running (`uvicorn api:app --port ...`) "
+            "with a Razorpay Test Mode account connected — see `pitch/razorpay_live_setup.md`."
+        )
+
     if st.button("\U0001F504 Refresh", key="live_refresh"):
         st.rerun()
 
@@ -578,9 +600,7 @@ with tab_live:
 
     if live_df.empty:
         st.info(
-            "No real transactions yet. Start the API service (`uvicorn api:app`), open **/checkout** "
-            "in a browser with a Razorpay Test Mode account connected, and pay with one of "
-            "[Razorpay's test failure cards](https://razorpay.com/docs/payments/payments/test-card-details/). "
+            "No real transactions yet — pay (and fail) one above, then hit Refresh. "
             "See `pitch/razorpay_live_setup.md` for the full setup."
         )
     else:
