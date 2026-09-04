@@ -50,6 +50,7 @@ RISK_TYPE_LABEL = {
 # mirroring Streamlit's st.cache_data -- avoids re-running the whole
 # pipeline on every request for the same seed.
 _run_cache: dict[int, tuple] = {}
+_timeline_cache: dict[tuple[int, int], "pd.DataFrame"] = {}
 
 
 def _clean(value):
@@ -196,15 +197,22 @@ def transaction_detail(txn_id: str, seed: int = Query(default=42, ge=1, le=9999)
 
 @router.get("/timeline")
 def timeline(seed: int = Query(default=42, ge=1, le=9999), days: int = Query(default=5, ge=2, le=10)) -> dict:
-    from api import get_model
-    df = generate(seed=seed)
-    model = get_model()
-    daily = run_workflow(
-        df, model, n_days=days,
-        db_path=f"data/workflow_state_{seed}.db",
-        audit_path=f"data/workflow_audit_log_{seed}.jsonl",
-    )
-    return _clean({"days": daily.to_dict(orient="records")})
+    # run_workflow is genuinely slow (a real multi-day SQLite-backed
+    # simulation, ~10s+) -- cached per (seed, days) so repeat requests
+    # (a tab revisit, a page reload) don't re-pay that cost, matching the
+    # cheap/instant feel of every other dashboard endpoint.
+    cache_key = (seed, days)
+    if cache_key not in _timeline_cache:
+        from api import get_model
+        df = generate(seed=seed)
+        model = get_model()
+        daily = run_workflow(
+            df, model, n_days=days,
+            db_path=f"data/workflow_state_{seed}.db",
+            audit_path=f"data/workflow_audit_log_{seed}.jsonl",
+        )
+        _timeline_cache[cache_key] = daily
+    return _clean({"days": _timeline_cache[cache_key].to_dict(orient="records")})
 
 
 class TryTransactionIn(BaseModel):
