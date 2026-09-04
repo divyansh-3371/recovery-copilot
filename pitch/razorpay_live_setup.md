@@ -128,6 +128,20 @@ That file is the proof: a real payment failure, from a real (Test Mode)
 Razorpay account, processed end-to-end by the actual agent — not a
 simulation.
 
+## A real finding from testing this live
+
+Razorpay's docs list ~10 distinct "failure scenario" test cards (insufficient
+funds, timed out, declined, authentication failed, ...). Running several of
+them through this integration for real showed that **Test Mode's webhook
+payload doesn't distinguish between them** — every one delivered the same
+generic `error_reason: "payment_failed"`, `error_code: "BAD_REQUEST_ERROR"`.
+The scenario names are a label for which card to use in the checkout UI, not
+a value that reaches `/webhooks/razorpay`. `agent/razorpay_live.py`'s mapping
+table already handles this correctly (falls through to `issuer_declined`),
+and the module docstring there records exactly what was verified vs. what's
+still only informed by documentation (Live Mode's more specific reason codes,
+untested here).
+
 ## What this does and doesn't prove
 
 - **Real**: order creation, checkout, backend signature verification (a

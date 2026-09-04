@@ -307,6 +307,14 @@ async def razorpay_webhook(request: Request) -> dict:
     raw_body_str = raw_body.decode("utf-8")
 
     if not razorpay_live.verify_webhook_signature(raw_body_str, signature):
+        # Diagnostic only -- never logs the secret or the signature itself,
+        # just enough shape info to tell a secret-mismatch apart from some
+        # other cause (missing header, empty body, secret not loaded).
+        logger.warning(
+            "Webhook signature check failed. body_len=%d has_signature_header=%s "
+            "webhook_secret_loaded=%s",
+            len(raw_body_str), bool(signature), bool(os.environ.get("RAZORPAY_WEBHOOK_SECRET")),
+        )
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
     try:
@@ -324,6 +332,12 @@ async def razorpay_webhook(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="Malformed payment.failed payload")
 
     row_dict = razorpay_live.map_webhook_payment_to_row(payment_entity)
+    # Debug-only fields, observability only -- pulled out before the row goes
+    # anywhere near the model/policy, which only know the canonical schema.
+    raw_error_reason = row_dict.pop("_raw_error_reason", None)
+    raw_error_code = row_dict.pop("_raw_error_code", None)
+    raw_error_description = row_dict.pop("_raw_error_description", None)
+
     row = pd.Series({**row_dict, "_true_recoverable_prob": 0.0})
     model = get_model()
     score = float(model.predict_proba(pd.DataFrame([row]))[0])
@@ -340,6 +354,9 @@ async def razorpay_webhook(request: Request) -> dict:
             "failure_reason": row_dict["failure_reason"],
             "amount": row_dict["amount"],
             "recoverability_score": score,
+            "raw_error_reason": raw_error_reason,
+            "raw_error_code": raw_error_code,
+            "raw_error_description": raw_error_description,
         },
     )
 

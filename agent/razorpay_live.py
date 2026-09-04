@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 
 import razorpay
@@ -64,26 +65,53 @@ class OrderResult:
     error: str | None = None
 
 
+_TRANSIENT_RETRY_ATTEMPTS = 3
+_TRANSIENT_RETRY_BACKOFF_SECONDS = 0.75
+
+
+def _is_transient_network_error(exc: Exception) -> bool:
+    """True for a dropped/aborted connection worth retrying (seen in
+    practice: 'RemoteDisconnected' when a server closes the socket before
+    responding) -- false for anything that's actually about the request
+    itself (bad credentials, bad params), which retrying won't fix."""
+    name = type(exc).__name__
+    return name in ("ConnectionError", "ConnectionResetError", "RemoteDisconnected",
+                     "ChunkedEncodingError", "ProtocolError", "ReadTimeout", "ConnectTimeout")
+
+
 def create_order(amount_rupees: float, currency: str = "INR", receipt: str | None = None,
                   notes: dict | None = None) -> OrderResult:
     """Creates a real Razorpay order. amount_rupees is converted to paise
     (Razorpay's API works in the smallest currency unit) here, once, so
-    every caller passes ordinary rupee amounts."""
+    every caller passes ordinary rupee amounts.
+
+    Retries a few times on a transient dropped connection (this happens in
+    practice -- a server closing a connection before responding -- and is
+    not specific to bad credentials or a bad request, both of which come
+    back as a clean HTTP error instead and are not retried)."""
     client = _get_client()
     if client is None:
         return OrderResult(ok=False, error="Razorpay is not configured on this server "
                                             "(RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET not set).")
     amount_paise = int(round(amount_rupees * 100))
-    try:
-        order = client.order.create(data={
-            "amount": amount_paise,
-            "currency": currency,
-            "receipt": receipt or f"rc_{amount_paise}",
-            "notes": notes or {},
-        })
-        return OrderResult(ok=True, order_id=order["id"], amount_paise=order["amount"], currency=order["currency"])
-    except Exception as exc:  # a real network/API failure -- surface it, don't crash the request
-        return OrderResult(ok=False, error=str(exc))
+    last_exc: Exception | None = None
+    for attempt in range(_TRANSIENT_RETRY_ATTEMPTS):
+        try:
+            order = client.order.create(data={
+                "amount": amount_paise,
+                "currency": currency,
+                "receipt": receipt or f"rc_{amount_paise}",
+                "notes": notes or {},
+            })
+            return OrderResult(ok=True, order_id=order["id"], amount_paise=order["amount"],
+                                currency=order["currency"])
+        except Exception as exc:  # a real network/API failure -- surface it, don't crash the request
+            last_exc = exc
+            if _is_transient_network_error(exc) and attempt < _TRANSIENT_RETRY_ATTEMPTS - 1:
+                time.sleep(_TRANSIENT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            break
+    return OrderResult(ok=False, error=str(last_exc))
 
 
 def verify_payment_signature(order_id: str, payment_id: str, signature: str) -> bool:
@@ -125,11 +153,21 @@ def verify_webhook_signature(raw_body: str, signature: str) -> bool:
 
 # Best-effort mapping from Razorpay's documented payment error_reason/
 # error_code values to this project's own failure-reason taxonomy.
-# Informed by Razorpay's public API documentation, not verified against a
-# large volume of live traffic -- refine this against real webhook payloads
-# once connected to a live account. Unknown values fall back to a generic
-# "issuer_declined" rather than raising, since a webhook receiver must never
-# crash on an unexpected-but-real payload.
+#
+# Verified against real Test Mode traffic (4 separate genuine webhook
+# deliveries, triggered by 3 different documented "failure scenario" test
+# cards -- insufficient_fund, payment_timed_out, authentication_failed):
+# every one of them reports the *same* generic error_reason="payment_failed",
+# error_code="BAD_REQUEST_ERROR" over the actual webhook payload. Razorpay's
+# scenario names (in their test-card docs) are a label for which card
+# triggers a failure in the UI, not a value that reaches this endpoint --
+# so in Test Mode, everything correctly falls through to the "payment_failed"
+# entry below regardless of which scenario card was used. The more specific
+# entries (insufficient_fund, gateway_timeout, etc.) are what Razorpay's docs
+# say a genuine Live Mode failure can report -- still unverified against real
+# live traffic, kept here for when that's the mode in use. Unknown values
+# fall back to a generic "issuer_declined" rather than raising, since a
+# webhook receiver must never crash on an unexpected-but-real payload.
 RAZORPAY_ERROR_REASON_MAP = {
     "payment_failed": "issuer_declined",
     "payment_declined": "issuer_declined",
@@ -179,6 +217,12 @@ def map_webhook_payment_to_row(payment_entity: dict) -> dict:
         "do_not_contact": False,
         "customer_local_hour": 12,
         "days_since_event": 0,
+        # raw values, kept only for observability (see RAZORPAY_ERROR_REASON_MAP's
+        # note) -- not used by the classifier/policy, just logged so the map
+        # above can be refined against what Razorpay actually sends
+        "_raw_error_reason": payment_entity.get("error_reason"),
+        "_raw_error_code": payment_entity.get("error_code"),
+        "_raw_error_description": payment_entity.get("error_description"),
     }
 
 
