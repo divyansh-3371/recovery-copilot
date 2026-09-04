@@ -104,6 +104,19 @@ accounting. Two were solid as-is; three had real gaps, closed additively
   recovered (gross minus cost) for both the agent and the baseline, not
   just gross ₹.
 
+## Cost-aware value triage
+
+Above `VALUE_TRIAGE_THRESHOLD` (₹75,000, in `agent/policy.py`), any
+transaction routes to `ESCALATE_HUMAN` **regardless of what its
+failure-reason category would otherwise pick** — a ₹1,50,000 expired-card
+failure gets a human, not the usual "ask the customer to update their
+card" message; a ₹50 one still gets the cheap automated path. Checked
+after every compliance-critical rule (do-not-contact, the max-attempt cap,
+systemic-issue/ops routing, a risk-engine block) so none of those are ever
+overridden by value — only the routine reason-based branches are. Try it
+on the dashboard's **Try it live** tab: push the amount past ₹75,000 on
+any failure reason and watch the decision flip.
+
 ## Beyond the single-pass MVP
 
 Four additions push this past a one-shot demo toward something that argues
