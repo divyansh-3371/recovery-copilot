@@ -7,7 +7,7 @@ subscription/mandate failures, overdue B2B invoices), decides the right
 *bounded* intervention, and executes it — with measured recovered ₹, a
 compliant stopping-rules policy, and a complete audit trail.
 
-The dashboard's **"Try it live" tab** lets you feed the agent your own
+The dashboard's **"Try a transaction" tab** lets you feed the agent your own
 transaction (amount, failure reason, payment method, attempts...) and
 watch the score, decision, reasoning, cost, and Razorpay-call mapping
 recompute in real time — nothing on this dashboard is pre-baked.
@@ -114,7 +114,7 @@ card" message; a ₹50 one still gets the cheap automated path. Checked
 after every compliance-critical rule (do-not-contact, the max-attempt cap,
 systemic-issue/ops routing, a risk-engine block) so none of those are ever
 overridden by value — only the routine reason-based branches are. Try it
-on the dashboard's **Try it live** tab: push the amount past ₹75,000 on
+on the dashboard's **Try a transaction** tab: push the amount past ₹75,000 on
 any failure reason and watch the decision flip.
 
 ## Beyond the single-pass MVP

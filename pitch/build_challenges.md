@@ -302,3 +302,32 @@ being silently missed before this fix, not a hypothetical. 7 new tests.
 Lesson: when a proposed fix doesn't survive tracing through what data
 would actually change, that's a signal to look for the real gap
 underneath it rather than build the theater anyway.
+
+## 17. The dashboard was designed for the reviewer, not the person who'd actually use it
+
+**Problem:** asked to make the dashboard look professional for an *end
+user*, not a reviewer. A pass through the actual copy turned up genuinely
+reviewer-only language leaking into what should have been product UI --
+the sidebar's "About" expander literally said *"Targets Razorpay's own bar
+for this track,"* section headers read like a data-science notebook
+("Recoverability score 0.60", raw feature names like
+`cat__customer_segment_vip`), and the polished merchant-facing page built
+earlier was buried as a fifth tab instead of being the default view.
+
+**Fix:** consolidated five tabs into four (Dashboard, Transactions,
+Recovery timeline, Try a transaction), with the merchant-facing content
+promoted to the default landing tab instead of a side tab. Rewrote every
+piece of reviewer-facing copy in the sidebar and headers. Added a
+`_friendly_feature()` translator so "why" explanations read as "customer
+type: vip -- a strong factor that improves the chances of recovery"
+instead of raw sklearn feature names, and a `display_reasoning()` cleanup
+pass that turns "Recoverability score 0.60" into "Confidence (60%)" and
+strips quoted internal identifiers, applied to every reasoning string
+shown in the primary view. All genuinely technical detail (raw feature
+contributions, the exact Razorpay API call, the full timestamped audit
+trail) still exists in full -- moved into a collapsed "Technical details"
+expander per transaction, not deleted, so a judge who wants the depth
+still gets it without it being the default experience for everyone else.
+Verified every tab live after the rewrite, including that the cleanup
+regex doesn't mangle real reasoning text (tested against all the actual
+strings the policy engine produces, not synthetic examples).

@@ -24,64 +24,43 @@ Timing is a guide, not a script to read verbatim — say it in your own words.
 
 ## 1:10–3:00 — Live demo (dashboard walkthrough)
 
-The dashboard is five tabs — Try it live, Overview, Multi-day workflow,
-Investigate, Merchant view — each answering a different question a real
-viewer would ask.
+The dashboard is four tabs — Dashboard, Transactions, Recovery timeline,
+Try a transaction — designed to read like a real product a merchant would
+actually use, not a technical review screen. Every technical/audit detail
+is still there, just tucked into a collapsed "Technical details" section
+on the tabs that have one, so the primary view stays clean.
 
-0. **Try it live tab, first — prove it's not a canned demo.** Change the
-   amount field from something mid-size down to ₹60 on camera:
-   *"This isn't pre-computed — watch the decision itself change."* Point at
-   it flipping from a nudge to "left alone, not worth pursuing" and the
-   reasoning updating to cite the ₹150 recovery-cost floor, live, with a
-   visible recompute timestamp. *"Same classifier, same policy engine, same
-   Razorpay-call mapping running on whatever I type — not a fixed report."*
-1. **Overview tab.** Point at the **consolidated systemic-issue card** first:
-   *"The agent just caught a netbanking outage on its own — 37x the normal
-   bank-timeout rate — and paused customer-facing retries for it instead of
-   spamming people during an outage that isn't their fault."*
-2. **KPI cards:** *"₹X at risk this batch, the agent recovered ₹Y gross —
-   and after accounting for the actual cost of each intervention, ₹Z net —
-   that's N% more than a naive single-retry baseline on the identical
-   transactions, and it avoided M compliance violations the baseline would
-   have committed."*
-3. **Grouped bar chart:** *"Here's recovered revenue broken out by category —
-   payment failures, checkout abandonment, subscription failures, overdue
-   invoices — baseline vs Recovery Copilot, side by side."*
-4. **Action chart — click a bar:** *"This is what the agent actually did —
-   not just 'flagged as risky,' a concrete action. And it's not static —"*
-   click any bar *"— clicking one shows a real example transaction that got
-   that decision."*
-5. **Merchant view tab:** *"And this is what the actual merchant using this
-   would see — not the technical detail, just: how much did I get back,
-   what's still in progress, what are my top failure reasons right now.
-   Different audience, different view, same underlying agent."*
-6. **Investigate tab — drill into one transaction:** pick one with a `SEND_MESSAGE` action.
-   *"Here's the recoverability score and exactly why — the top factors that
-   pushed it up or down. Here's the agent's reasoning for the action it
-   chose. Here's the actual message it generated. And here's the full audit
-   trail — every action, timestamped, with its reasoning, permanently
-   logged."*
-   Then pick one with `RETRY_PAYMENT` on a subscription failure:
-   *"This isn't one blind retry — it's an explicit mandate retry sequence:
-   immediate re-presentment, then a delayed retry, then a fallback to a
-   manual re-authorization link if both silently fail."*
-   Then find one with a promise-to-pay note (filter the table, or just
-   re-roll the seed):
-   *"And when a customer promises to pay by a date instead of paying
-   immediately, the tracker doesn't just accept that at face value — it
-   checks whether the promise was kept, and a broken one gets auto-escalated
-   to a human agent instead of quietly disappearing."*
-   Expand the "Razorpay API call this would trigger" box:
-   *"And this isn't operating in the abstract — here's the actual Razorpay
-   API call this decision would make in production."*
-
-7. **Multi-day workflow tab:** *"Everything so far was one pass. This
-   runs the same batch through the agent across several simulated days,
-   with state actually persisting between them — so the retry sequencer
-   genuinely advances step by step, and a promise-to-pay deadline
-   genuinely arrives and gets checked, instead of every run starting from
-   attempt zero. And it recovers even more than the single pass did,
-   because a real workflow gets multiple scheduled chances."*
+1. **Dashboard tab.** Lead with the hero number: *"This period, Recovery
+   Copilot recovered ₹X for you, out of ₹Y at risk."* Point at the
+   **Heads up card**: *"The agent just caught a netbanking outage on its
+   own — 37x the normal rate — and paused customer-facing retries for it
+   instead of spamming people during an outage that isn't their fault."*
+   Then the KPI row and the two charts: *"Recovered by category, before
+   Recovery Copilot vs after — and what's actually happening operationally."*
+   Click a bar on the "What's happening" chart: *"Not static — clicking
+   shows a real example transaction that got that decision."*
+2. **Transactions tab.** Filter or scroll to any row, then look one up:
+   *"Here's Recovery Copilot's confidence and exactly why — in plain
+   language, not a model dump. Here's what we did and why. Here's the
+   actual message that went to the customer."* Expand **Technical details**:
+   *"And if you want the raw model output, the exact Razorpay API call
+   this would trigger, and the full timestamped audit trail — it's all
+   right here, not hidden."* Find one with a promise-to-pay note:
+   *"When a customer promises to pay instead of paying immediately, the
+   tracker checks whether that promise was kept — a broken one gets
+   auto-escalated, not quietly dropped."*
+3. **Recovery timeline tab:** *"The Dashboard is one snapshot. This shows
+   what happens over several simulated days as Recovery Copilot follows
+   up — and it recovers even more than the single snapshot, because
+   follow-up gives every case multiple chances, not just one."*
+4. **Try a transaction tab, to close the demo — prove it's not a canned
+   report.** Change the amount field from something mid-size down to ₹60
+   on camera: *"Watch the decision itself change, live — not pre-computed."*
+   Point at it flipping from a reminder to "left alone, not worth pursuing."
+   Then push it above ₹75,000 on any reason: *"— and now it goes straight
+   to a specialist, regardless of what the usual reason-based routing
+   would have picked. Same engine as everywhere else on this page, running
+   on whatever you type."*
 8. **If you have a `voice_hinglish` transaction:** click play. *"For
    returning customers who've already missed one attempt, the agent
    switches to a Hinglish voice nudge — synthesized fully offline, no
