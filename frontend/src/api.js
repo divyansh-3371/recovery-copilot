@@ -13,6 +13,25 @@ export function setApiBase(url) {
   localStorage.setItem("rc_api_base", url.replace(/\/$/, ""));
 }
 
+// FastAPI's error body isn't always a plain string: a Pydantic validation
+// failure (422) sends `detail` as an array of {loc, msg, type} objects,
+// which would otherwise print as the useless "[object Object]" once
+// coerced into a template string. A manually-raised HTTPException (401,
+// 404, 503...) sends `detail` as a plain string, which passes through
+// unchanged.
+function formatErrorDetail(detail) {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((e) => {
+        const field = Array.isArray(e.loc) ? e.loc.filter((p) => p !== "body").join(".") : "";
+        return field ? `${field}: ${e.msg}` : e.msg;
+      })
+      .join("; ");
+  }
+  return null;
+}
+
 async function request(path, options = {}) {
   const base = getApiBase();
   const resp = await fetch(`${base}${path}`, {
@@ -23,7 +42,7 @@ async function request(path, options = {}) {
     let detail = resp.statusText;
     try {
       const body = await resp.json();
-      detail = body.detail || JSON.stringify(body);
+      detail = formatErrorDetail(body.detail) || JSON.stringify(body);
     } catch {
       // response wasn't JSON -- keep statusText
     }
