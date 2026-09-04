@@ -139,20 +139,26 @@ to really execute, with what's already set up:
 -- uses the same `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` from step 3. On by
 default once those are set; nothing further to do.
 
-**`SEND_MESSAGE` → a real email**, via Gmail SMTP + an App Password (not
-your normal Google password):
+**`SEND_MESSAGE` (and `RETRY_PAYMENT`'s email copy) → a real email**, via
+[Resend](https://resend.com)'s HTTP API. Gmail SMTP was tried first but
+doesn't work on every network -- many residential ISPs (India included)
+block outbound SMTP ports (25/465/587) entirely to stop spam-relay abuse;
+confirmed here with raw TCP connection tests, not just an app-level
+timeout. Resend's API is a plain HTTPS call on port 443, same as every
+other outbound call this project already makes, so it isn't affected.
 
-1. Turn on 2-Step Verification on the Google account you want to send
-   from, if it isn't already: https://myaccount.google.com/signinoptions/two-step-verification
-2. Generate an App Password: https://myaccount.google.com/apppasswords
-   — name it anything (e.g. "Recovery Copilot"), copy the 16-character
-   password it shows you once.
+1. Sign up free at https://resend.com/signup (email/password or GitHub).
+2. Create an API key: https://resend.com/api-keys — name it anything.
 3. Add to `.env` (never paste this into chat):
    ```
-   GMAIL_USER=you@gmail.com
-   GMAIL_APP_PASSWORD=the16charpasswordwithnospaces
+   RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxx
    ```
 4. Restart `uvicorn`.
+
+Note: with no sending domain verified, Resend's sandbox sender
+(`onboarding@resend.dev`, the default here) can only deliver to the email
+address that owns the Resend account -- exactly right for testing this
+yourself, since you'll be entering your own email at checkout anyway.
 
 Both are deliberately wired **only** into the real webhook path
 (`POST /webhooks/razorpay` in `api.py`) -- never into `/dashboard/try` or

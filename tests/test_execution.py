@@ -79,66 +79,54 @@ def test_create_payment_link_api_error(monkeypatch):
 # --- agent/email_sender.py ---------------------------------------------------
 
 def test_email_not_configured(monkeypatch):
-    monkeypatch.delenv("GMAIL_USER", raising=False)
-    monkeypatch.delenv("GMAIL_APP_PASSWORD", raising=False)
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
     result = email_sender.send_email("someone@example.com", "subject", "body")
     assert result.ok is False
     assert "not configured" in result.error.lower()
 
 
 def test_email_no_recipient(monkeypatch):
-    monkeypatch.setenv("GMAIL_USER", "me@gmail.com")
-    monkeypatch.setenv("GMAIL_APP_PASSWORD", "fake_app_password")
+    monkeypatch.setenv("RESEND_API_KEY", "re_fake_key")
     result = email_sender.send_email("", "subject", "body")
     assert result.ok is False
     assert "recipient" in result.error.lower()
 
 
 def test_email_success(monkeypatch):
-    monkeypatch.setenv("GMAIL_USER", "me@gmail.com")
-    monkeypatch.setenv("GMAIL_APP_PASSWORD", "fake_app_password")
+    monkeypatch.setenv("RESEND_API_KEY", "re_fake_key")
 
     sent = {}
 
-    class FakeSMTP:
-        def __init__(self, host, port, timeout=None):
-            sent["host"] = host
-            sent["port"] = port
+    class FakeResponse:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
 
-        def __enter__(self):
-            return self
+    def fake_urlopen(req, timeout=None):
+        sent["url"] = req.full_url
+        sent["headers"] = dict(req.header_items())
+        sent["body"] = json.loads(req.data.decode())
+        return FakeResponse()
 
-        def __exit__(self, *a):
-            return False
-
-        def starttls(self):
-            sent["starttls"] = True
-
-        def login(self, user, password):
-            sent["login"] = (user, password)
-
-        def sendmail(self, from_addr, to_addrs, msg):
-            sent["sendmail"] = (from_addr, to_addrs)
-
-    monkeypatch.setattr(email_sender.smtplib, "SMTP", FakeSMTP)
+    monkeypatch.setattr(email_sender.urllib.request, "urlopen", fake_urlopen)
     result = email_sender.send_email("customer@example.com", "Subject", "Body text")
     assert result.ok is True
-    assert sent["login"] == ("me@gmail.com", "fake_app_password")
-    assert sent["sendmail"][1] == ["customer@example.com"]
+    assert sent["url"] == email_sender.RESEND_API_URL
+    assert sent["headers"]["Authorization"] == "Bearer re_fake_key"
+    assert sent["body"]["to"] == ["customer@example.com"]
+    assert sent["body"]["subject"] == "Subject"
 
 
-def test_email_smtp_failure_does_not_raise(monkeypatch):
-    monkeypatch.setenv("GMAIL_USER", "me@gmail.com")
-    monkeypatch.setenv("GMAIL_APP_PASSWORD", "fake_app_password")
+def test_email_http_failure_does_not_raise(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY", "re_fake_key")
 
-    class FailingSMTP:
-        def __init__(self, *a, **kw):
-            raise ConnectionRefusedError("smtp down")
+    def fake_urlopen(req, timeout=None):
+        raise ConnectionRefusedError("network down")
 
-    monkeypatch.setattr(email_sender.smtplib, "SMTP", FailingSMTP)
+    monkeypatch.setattr(email_sender.urllib.request, "urlopen", fake_urlopen)
     result = email_sender.send_email("customer@example.com", "Subject", "Body")
     assert result.ok is False
-    assert "smtp down" in result.error
+    assert "network down" in result.error
 
 
 # --- api.py webhook wiring: does it call the right execution path? ----------
