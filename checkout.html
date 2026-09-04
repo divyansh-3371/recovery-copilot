@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recovery Copilot -- Test Checkout</title>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<style>
+  :root { color-scheme: light; }
+  body {
+    margin: 0; background: #f4f6f9; color: #1c2733;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex; align-items: center; justify-content: center; min-height: 100vh;
+  }
+  .card {
+    background: #fff; border-radius: 14px; padding: 32px 36px; width: 380px; max-width: 90vw;
+    box-shadow: 0 8px 30px rgba(20, 30, 50, 0.08);
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 6px; }
+  p.sub { color: #5b6b7c; font-size: 0.9rem; margin: 0 0 22px; line-height: 1.4; }
+  label { font-size: 0.85rem; color: #33424f; font-weight: 600; display: block; margin-bottom: 6px; }
+  input[type="number"] {
+    width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid #d5dce3; font-size: 1rem; margin-bottom: 18px;
+  }
+  button {
+    width: 100%; padding: 12px; border: none; border-radius: 8px; background: #2a78d6;
+    color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { background: #a9c3e6; cursor: not-allowed; }
+  #status { margin-top: 16px; font-size: 0.88rem; line-height: 1.5; white-space: pre-wrap; }
+  .status-ok { color: #17803d; }
+  .status-error { color: #b3261e; }
+  .status-info { color: #5b6b7c; }
+  .badge {
+    display: inline-block; font-size: 0.72rem; font-weight: 700; padding: 3px 8px;
+    border-radius: 999px; background: #fff3cd; color: #8a6300; margin-bottom: 16px;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="badge">TEST MODE</div>
+  <h1>Recovery Copilot -- test checkout</h1>
+  <p class="sub">
+    This is a real Razorpay Test Mode payment (no real money moves). Use a
+    <a href="https://razorpay.com/docs/payments/payments/test-card-upi-details/" target="_blank" rel="noopener">documented test failure card</a>
+    to see the failure flow live into Recovery Copilot's agent -- check the
+    dashboard or <code>data/live_audit_log.jsonl</code> right after.
+  </p>
+  <label for="amount">Amount (INR)</label>
+  <input id="amount" type="number" value="500" min="1" step="1">
+  <button id="pay-btn">Pay with Razorpay</button>
+  <div id="status" class="status-info"></div>
+</div>
+
+<script>
+const statusEl = document.getElementById('status');
+const payBtn = document.getElementById('pay-btn');
+
+function setStatus(text, cls) {
+  statusEl.textContent = text;
+  statusEl.className = cls || 'status-info';
+}
+
+fetch('/razorpay/status').then(r => r.json()).then(d => {
+  if (!d.configured) {
+    setStatus('This server has no Razorpay account connected yet (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET not set). See pitch/razorpay_live_setup.md.', 'status-error');
+    payBtn.disabled = true;
+  }
+}).catch(() => {});
+
+payBtn.onclick = async function () {
+  const amount = parseFloat(document.getElementById('amount').value);
+  if (!amount || amount <= 0) {
+    setStatus('Enter a valid amount.', 'status-error');
+    return;
+  }
+  payBtn.disabled = true;
+  setStatus('Creating order...', 'status-info');
+
+  let orderData;
+  try {
+    const resp = await fetch('/checkout/create-order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount: amount }),
+    });
+    orderData = await resp.json();
+    if (!resp.ok || !orderData.ok) {
+      setStatus('Could not create order: ' + (orderData.detail || orderData.error || resp.statusText), 'status-error');
+      payBtn.disabled = false;
+      return;
+    }
+  } catch (err) {
+    setStatus('Network error creating order: ' + err, 'status-error');
+    payBtn.disabled = false;
+    return;
+  }
+
+  const options = {
+    key: orderData.key_id,
+    amount: orderData.amount,
+    currency: orderData.currency,
+    order_id: orderData.order_id,
+    name: 'Recovery Copilot',
+    description: 'Test transaction',
+    handler: async function (response) {
+      setStatus('Verifying payment on the backend...', 'status-info');
+      try {
+        const verifyResp = await fetch('/checkout/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature,
+          }),
+        });
+        const verifyData = await verifyResp.json();
+        if (verifyData.ok) {
+          setStatus('Payment verified by the backend (signature checked, not just trusted from the browser).', 'status-ok');
+        } else {
+          setStatus('Signature verification FAILED -- this payment is not trusted.', 'status-error');
+        }
+      } catch (err) {
+        setStatus('Network error verifying payment: ' + err, 'status-error');
+      }
+      payBtn.disabled = false;
+    },
+    modal: {
+      ondismiss: function () {
+        setStatus('Checkout closed.', 'status-info');
+        payBtn.disabled = false;
+      },
+    },
+    theme: { color: '#2a78d6' },
+  };
+
+  const rzp = new Razorpay(options);
+  rzp.on('payment.failed', function (response) {
+    setStatus(
+      'Payment failed: ' + response.error.description +
+      '\n\nRazorpay just sent Recovery Copilot a webhook for this -- open the dashboard ' +
+      'or data/live_audit_log.jsonl to see the agent\'s real-time decision on it.',
+      'status-error'
+    );
+    payBtn.disabled = false;
+  });
+  rzp.open();
+};
+</script>
+</body>
+</html>

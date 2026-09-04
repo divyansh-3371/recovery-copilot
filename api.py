@@ -28,6 +28,14 @@ Security posture (deliberately explicit, not assumed):
     read cross-origin responses) since nothing here is meant to be called
     directly from a browser today. Add it deliberately, scoped to a real
     origin, if that ever changes -- never with allow_origins=["*"].
+  - The /checkout/* and /webhooks/razorpay routes (real Razorpay integration,
+    see agent/razorpay_live.py) are exempt from require_api_key -- a
+    customer's own browser calls /checkout/*, and Razorpay's servers call
+    the webhook, neither of which holds our X-API-Key. Both are still
+    covered by the same rate-limit middleware, and the webhook route has
+    its own, stronger authentication: an HMAC signature only Razorpay and
+    this server know how to produce (RAZORPAY_WEBHOOK_SECRET) -- verified
+    against the exact raw request body before anything else happens.
 
 Run with:
     uvicorn api:app --reload
@@ -38,6 +46,7 @@ Then, for example:
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import tempfile
@@ -46,9 +55,11 @@ from typing import Literal
 
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
+from agent import razorpay_live
+from agent.audit import AuditTrail
 from agent.classifier import RecoverabilityModel, train_default_model
 from agent.pipeline import run_pipeline
 from agent.policy import decide as policy_decide
@@ -61,9 +72,11 @@ logger = logging.getLogger("recovery_copilot.api")
 MAX_BATCH_SIZE = 2000
 RATE_LIMIT_MAX_REQUESTS = 30
 RATE_LIMIT_WINDOW_SECONDS = 60.0
+LIVE_AUDIT_LOG_PATH = "data/live_audit_log.jsonl"
 
 _model: RecoverabilityModel | None = None
 _limiter = RateLimiter(max_requests=RATE_LIMIT_MAX_REQUESTS, window_seconds=RATE_LIMIT_WINDOW_SECONDS)
+_live_audit = AuditTrail(path=LIVE_AUDIT_LOG_PATH)
 
 
 def get_model() -> RecoverabilityModel:
@@ -79,6 +92,14 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "API_KEY is not set -- /decide and /batch/demo are running in OPEN DEMO MODE "
             "(no auth required). Set API_KEY to require the X-API-Key header in production."
+        )
+    if razorpay_live.is_configured():
+        logger.info("Razorpay is configured -- /checkout/* will create real Test/Live Mode orders.")
+    else:
+        logger.warning(
+            "RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not set -- /checkout/* will return "
+            "'not configured' until a real Razorpay account is connected. See "
+            "pitch/razorpay_live_setup.md."
         )
     yield
 
@@ -209,3 +230,117 @@ def decide_one(
             "method": call.method, "path": call.path, "payload": call.payload, "note": call.note,
         } if call else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# Live Razorpay integration -- real orders, real signature verification, and
+# a real webhook receiver that feeds actual payment-failure events into the
+# same score/decide pipeline as everything else above. See
+# agent/razorpay_live.py and pitch/razorpay_live_setup.md.
+# ---------------------------------------------------------------------------
+
+class CheckoutOrderIn(BaseModel):
+    amount: float = Field(gt=0, le=10_000_000)
+    receipt: str | None = Field(default=None, max_length=64)
+
+
+class CheckoutVerifyIn(BaseModel):
+    razorpay_order_id: str = Field(min_length=1, max_length=128)
+    razorpay_payment_id: str = Field(min_length=1, max_length=128)
+    razorpay_signature: str = Field(min_length=1, max_length=256)
+
+
+@app.get("/razorpay/status")
+def razorpay_status() -> dict:
+    """Lets the checkout page (and the dashboard) show whether a real
+    Razorpay account is connected yet, without attempting an order."""
+    return {"configured": razorpay_live.is_configured()}
+
+
+@app.get("/checkout")
+def checkout_page() -> FileResponse:
+    return FileResponse("checkout.html", media_type="text/html")
+
+
+@app.post("/checkout/create-order")
+def checkout_create_order(body: CheckoutOrderIn) -> dict:
+    """Called by the customer's own browser (checkout.html) -- creates a
+    real Razorpay order. No X-API-Key here: a customer's browser doesn't
+    hold our service credential. Only the public Key ID is ever returned,
+    never the Key Secret."""
+    result = razorpay_live.create_order(amount_rupees=body.amount, receipt=body.receipt)
+    if not result.ok:
+        raise HTTPException(status_code=503, detail=result.error)
+    return {
+        "ok": True,
+        "order_id": result.order_id,
+        "amount": result.amount_paise,
+        "currency": result.currency,
+        "key_id": razorpay_live.get_key_id(),
+    }
+
+
+@app.post("/checkout/verify")
+def checkout_verify(body: CheckoutVerifyIn) -> dict:
+    """Backend-side proof that a payment actually succeeded -- the frontend's
+    'payment successful' callback is never trusted on its own (see the
+    module docstring on agent/razorpay_live.py). Only a signature genuinely
+    produced with our Key Secret passes."""
+    ok = razorpay_live.verify_payment_signature(
+        body.razorpay_order_id, body.razorpay_payment_id, body.razorpay_signature
+    )
+    return {"ok": ok}
+
+
+@app.post("/webhooks/razorpay")
+async def razorpay_webhook(request: Request) -> dict:
+    """Real-time entry point: Razorpay calls this the moment a payment
+    fails (or any other subscribed event fires) -- no human, no dashboard
+    click, no poll loop involved. The event is authenticated by an HMAC
+    signature (RAZORPAY_WEBHOOK_SECRET), verified against the *raw* request
+    body before it's parsed as JSON -- reserializing first would break the
+    signature. A verified payment.failed event is scored and decided by the
+    exact same classifier/policy pipeline as every other transaction in
+    this project, and the decision is written to a live audit trail."""
+    raw_body = await request.body()
+    signature = request.headers.get("X-Razorpay-Signature", "")
+    raw_body_str = raw_body.decode("utf-8")
+
+    if not razorpay_live.verify_webhook_signature(raw_body_str, signature):
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+    try:
+        payload = razorpay_live.parse_webhook_event(raw_body_str)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Malformed JSON body")
+
+    event = payload.get("event")
+    if event != "payment.failed":
+        return {"status": "ignored", "event": event}
+
+    try:
+        payment_entity = payload["payload"]["payment"]["entity"]
+    except (KeyError, TypeError):
+        raise HTTPException(status_code=400, detail="Malformed payment.failed payload")
+
+    row_dict = razorpay_live.map_webhook_payment_to_row(payment_entity)
+    row = pd.Series({**row_dict, "_true_recoverable_prob": 0.0})
+    model = get_model()
+    score = float(model.predict_proba(pd.DataFrame([row]))[0])
+    decision = policy_decide(row, score, systemic_issues={})
+
+    _live_audit.log(
+        transaction_id=row_dict["transaction_id"],
+        action=decision.action,
+        reasoning=decision.reasoning,
+        stopping_rule_triggered=decision.stopping_rule_triggered,
+        extra={
+            "source": "razorpay_webhook",
+            "event": event,
+            "failure_reason": row_dict["failure_reason"],
+            "amount": row_dict["amount"],
+            "recoverability_score": score,
+        },
+    )
+
+    return {"status": "processed", "action": decision.action, "recoverability_score": score}
