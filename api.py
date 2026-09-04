@@ -73,7 +73,7 @@ from data.generate_data import FAILURE_REASONS, PAYMENT_METHODS, RISK_TYPES, CUS
 logger = logging.getLogger("recovery_copilot.api")
 
 MAX_BATCH_SIZE = 2000
-RATE_LIMIT_MAX_REQUESTS = 30
+RATE_LIMIT_MAX_REQUESTS = 300
 RATE_LIMIT_WINDOW_SECONDS = 60.0
 LIVE_AUDIT_LOG_PATH = "data/live_audit_log.jsonl"
 
