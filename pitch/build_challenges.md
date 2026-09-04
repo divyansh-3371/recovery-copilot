@@ -243,3 +243,23 @@ written from more than one process needs defensive reads by default --
 under concurrent access," and this bug only ever showed up because a real
 person was clicking the real app while other processes were also touching
 its data.
+
+## 15. Repeat-contact messages read identical to the first one
+
+**Problem:** self-identified, not hit as a crash -- `messenger.py` generated
+the same tone regardless of how many times a customer had already been
+contacted. A customer nudged three times would see three identical
+messages, which reads as either a bug or as the agent not actually
+tracking that it had already tried.
+
+**Fix:** message tone now escalates across three tiers keyed off
+`previous_attempts` (capped at 2, since the policy engine's max-attempts
+stopping rule means a message is never sent past that): tier 0 is warm and
+low-pressure, tier 1 is a polite follow-up, tier 2 is an explicit "final
+reminder" that's more direct without being pushy. Applied to both the
+template fallback (English and Hinglish, default and invoice-specific
+copy -- 12 template strings total) and the LLM prompt (which now states
+the attempt number and target tone explicitly). Verified live: attempts
+0/1/2 on the identical transaction produce visibly different text ("Hi
+Test, your payment didn't go through..." -> "just a quick follow-up..." ->
+"this is a final reminder..."), not just different in theory. 5 new tests.

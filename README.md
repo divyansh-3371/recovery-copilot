@@ -206,7 +206,7 @@ agent/retry_sequencer.py  explicit mandate/payment retry sequence (reason-tuned 
 agent/promise_tracker.py  promise-to-pay classification
 agent/cost_model.py       estimated cost per intervention action
 agent/policy.py           decision engine + stopping rules
-agent/messenger.py        message generation (LLM + template) + offline TTS
+agent/messenger.py        message generation (LLM + template, tone escalates with attempt #) + offline TTS
 agent/razorpay_client.py  action -> Razorpay API call stub mapping
 agent/audit.py            append-only audit trail
 agent/simulator.py        outcome simulation + baseline comparison + net-recovered math
