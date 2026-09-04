@@ -181,6 +181,37 @@ def test_webhook_attempts_email_for_send_message(client, monkeypatch):
         assert result["executed"] is True
 
 
+def test_email_recipient_override_redirects_delivery(client, monkeypatch):
+    """EMAIL_RECIPIENT_OVERRIDE exists for a real, narrow reason: Resend's
+    free sandbox sender can only deliver to the account owner's own
+    address, so testing against a real account needs every send routed
+    there regardless of what email the (test) customer entered. Verifies
+    both that send_email is actually called with the override address, and
+    that the audit-log/response's displayed "sent_to" reflects where the
+    email genuinely went -- not the original, misleading address."""
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", "whsec_test")
+    monkeypatch.setenv("EMAIL_RECIPIENT_OVERRIDE", "verified@example.com")
+    calls = []
+    monkeypatch.setattr(
+        api.email_sender, "send_email",
+        lambda to_address, subject, body: (calls.append(to_address), email_sender.EmailResult(ok=True))[1],
+    )
+    payload = {
+        "event": "payment.failed",
+        "payload": {"payment": {"entity": {
+            "id": "pay_OVERRIDE001", "amount": 500000, "currency": "INR", "method": "card",
+            "email": "someone.else@example.com", "error_reason": "payment_failed",
+        }}},
+    }
+    body = json.dumps(payload).encode()
+    sig = _sign("whsec_test", body.decode())
+    resp = client.post("/webhooks/razorpay", content=body, headers={"X-Razorpay-Signature": sig})
+    result = resp.json()
+    if result["action"] == "SEND_MESSAGE":
+        assert calls == ["verified@example.com"]
+        assert result["execution_detail"]["sent_to"] == "verified@example.com"
+
+
 def test_webhook_attempts_payment_link_for_retry(client, monkeypatch):
     monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", "whsec_test")
     calls = []

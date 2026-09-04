@@ -160,6 +160,19 @@ Note: with no sending domain verified, Resend's sandbox sender
 address that owns the Resend account -- exactly right for testing this
 yourself, since you'll be entering your own email at checkout anyway.
 
+In practice, Razorpay's checkout can reuse a contact it remembers from an
+earlier test payment on the same browser rather than whatever the
+checkout page prefills -- so a test session can end up with a real
+`payment.failed` event carrying an email that isn't the Resend account
+owner's, which Resend then rejects. Set `EMAIL_RECIPIENT_OVERRIDE` in
+`.env` to force every send to a known-deliverable address regardless of
+what the webhook payload reports:
+```
+EMAIL_RECIPIENT_OVERRIDE=you@example.com
+```
+This only affects where the email is *sent* -- the decision, scoring, and
+Payment Link's own customer record still use the real payload data.
+
 Both are deliberately wired **only** into the real webhook path
 (`POST /webhooks/razorpay` in `api.py`) -- never into `/dashboard/try` or
 the synthetic batch, since those use fake Faker-generated names with no

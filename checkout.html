@@ -126,6 +126,10 @@ payBtn.onclick = async function () {
     order_id: orderData.order_id,
     name: 'Recovery Copilot',
     description: 'Test transaction',
+    // Pinned so Resend's sandbox sender (only deliverable to the account
+    // owner's own address) always has a deliverable target, regardless of
+    // whether Razorpay reuses a saved contact from an earlier test payment.
+    prefill: { email: 'divyanshbansal482@gmail.com' },
     handler: async function (response) {
       setStatus('Verifying payment on the backend...', 'status-info');
       try {

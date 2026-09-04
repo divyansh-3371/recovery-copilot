@@ -392,6 +392,15 @@ async def razorpay_webhook(request: Request) -> dict:
     message_text: str | None = None
     customer_email = payment_entity.get("email")
     customer_contact = payment_entity.get("contact")
+    # Resend's free sandbox sender (no verified domain) can only deliver to
+    # the address that owns the Resend account -- Razorpay's checkout was
+    # observed reusing a remembered contact rather than the page's prefill,
+    # so email delivery is force-routed to a known-deliverable address when
+    # one is configured, rather than failing on every payment whose real
+    # email happens not to be it. The Payment Link's own customer_email
+    # (used for whatever real record Razorpay keeps) is untouched.
+    email_recipient_override = os.environ.get("EMAIL_RECIPIENT_OVERRIDE")
+    email_send_to = email_recipient_override or customer_email
 
     if decision.action == "RETRY_PAYMENT":
         link = razorpay_live.create_payment_link(
@@ -409,7 +418,7 @@ async def razorpay_webhook(request: Request) -> dict:
             # someone noticing a webpage element behind Razorpay's own
             # "Retry payment" modal.
             email = email_sender.send_email(
-                to_address=customer_email,
+                to_address=email_send_to,
                 subject="Your payment didn't go through -- here's a link to finish it",
                 body=f"We tried to process your payment again and couldn't reach your bank in time. "
                      f"You can complete it here: {link.short_url}",
@@ -442,13 +451,13 @@ async def razorpay_webhook(request: Request) -> dict:
             email_body = f"{message_text}\n\nComplete your payment here: {link.short_url}"
             link_id = link.link_id
         email = email_sender.send_email(
-            to_address=customer_email,
+            to_address=email_send_to,
             subject="Let's get your payment sorted",
             body=email_body,
         )
         if email.ok:
             executed = True
-            execution_detail = {"type": "email", "sent_to": customer_email}
+            execution_detail = {"type": "email", "sent_to": email_send_to}
             if link_id:
                 execution_detail["link_id"] = link_id
                 execution_detail["short_url"] = link.short_url
