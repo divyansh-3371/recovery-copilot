@@ -128,6 +128,40 @@ That file is the proof: a real payment failure, from a real (Test Mode)
 Razorpay account, processed end-to-end by the actual agent — not a
 simulation.
 
+## 8. Optional: real execution, not just a decision
+
+By default, a decision is computed and logged but nothing downstream
+actually happens -- `RETRY_PAYMENT` doesn't create a real retry and
+`SEND_MESSAGE` doesn't send anything. Two of the six actions can be wired
+to really execute, with what's already set up:
+
+**`RETRY_PAYMENT` → a real Razorpay Payment Link.** No new account needed
+-- uses the same `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` from step 3. On by
+default once those are set; nothing further to do.
+
+**`SEND_MESSAGE` → a real email**, via Gmail SMTP + an App Password (not
+your normal Google password):
+
+1. Turn on 2-Step Verification on the Google account you want to send
+   from, if it isn't already: https://myaccount.google.com/signinoptions/two-step-verification
+2. Generate an App Password: https://myaccount.google.com/apppasswords
+   — name it anything (e.g. "Recovery Copilot"), copy the 16-character
+   password it shows you once.
+3. Add to `.env` (never paste this into chat):
+   ```
+   GMAIL_USER=you@gmail.com
+   GMAIL_APP_PASSWORD=the16charpasswordwithnospaces
+   ```
+4. Restart `uvicorn`.
+
+Both are deliberately wired **only** into the real webhook path
+(`POST /webhooks/razorpay` in `api.py`) -- never into `/dashboard/try` or
+the synthetic batch, since those use fake Faker-generated names with no
+real email address to send to in the first place. A real payment failure
+from your own test checkout will now actually create a payable link or
+send a real email to whatever address was used at checkout -- test with
+your own email/details, not anyone else's.
+
 ## A real finding from testing this live
 
 Razorpay's docs list ~10 distinct "failure scenario" test cards (insufficient
@@ -149,13 +183,16 @@ untested here).
   `tests/test_razorpay_live.py`), and the webhook receiver's HMAC check
   and real-time hand-off into the same classifier/policy pipeline used
   everywhere else in this project.
-- **Not yet built**: the webhook receiver decides but doesn't (yet) act —
-  e.g. `RETRY_PAYMENT` doesn't automatically fire a real retry via the
-  Orders API, and `SEND_MESSAGE` doesn't automatically send a real SMS/email.
-  `agent/razorpay_client.py`'s call-shape mapping shows exactly what those
-  calls would look like; wiring them to actually fire is the natural next
-  step once retry/notification credentials (SMS gateway, etc.) are also in
-  place.
+- **Also real, opt-in (step 8 above)**: `RETRY_PAYMENT` creates a genuine,
+  payable Razorpay Payment Link; `SEND_MESSAGE` sends a real email. Both
+  only fire from this real webhook path, never from the synthetic batch.
+- **Not yet built**: the other three actions (`ESCALATE_HUMAN`,
+  `ESCALATE_COLLECTIONS`, `ESCALATE_OPS`) don't have a real destination to
+  escalate to (no ticketing/CRM system connected) — they're logged and
+  shown prominently on the dashboard, which is the closest thing to a real
+  "escalation" a solo project has a human on the other end of.
+  `agent/razorpay_client.py`'s call-shape mapping still shows what a fuller
+  integration's calls would look like beyond these two.
 - **Test Mode only**: going live (real money) requires Razorpay's business
   KYC/activation, which is out of scope here — Test Mode is what the
   buildathon needs and is what this guide sets up.

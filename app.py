@@ -653,6 +653,16 @@ with tab_live:
                     for r in reasoning:
                         st.markdown(f"- {display_reasoning(str(r))}")
 
+                executed = field(entry, "executed", False)
+                execution_detail = field(entry, "execution_detail", None)
+                if isinstance(execution_detail, dict):
+                    if executed and execution_detail.get("type") == "payment_link":
+                        st.success(f"A real Razorpay Payment Link was created: {execution_detail.get('short_url')}")
+                    elif executed and execution_detail.get("type") == "email":
+                        st.success(f"A real email was sent to {execution_detail.get('sent_to')}")
+                    elif execution_detail.get("error"):
+                        st.warning(f"Decision made, but execution failed: {execution_detail['error']}")
+
                 with st.expander("\U0001F527 Technical details"):
                     st.markdown(f"**Event:** `{field(entry, 'event')}` from Razorpay's webhook")
                     st.markdown(

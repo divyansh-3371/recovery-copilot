@@ -114,6 +114,56 @@ def create_order(amount_rupees: float, currency: str = "INR", receipt: str | Non
     return OrderResult(ok=False, error=str(last_exc))
 
 
+@dataclass
+class PaymentLinkResult:
+    ok: bool
+    link_id: str | None = None
+    short_url: str | None = None
+    error: str | None = None
+
+
+def create_payment_link(amount_rupees: float, description: str, customer_name: str | None = None,
+                         customer_email: str | None = None, customer_contact: str | None = None,
+                         currency: str = "INR") -> PaymentLinkResult:
+    """Creates a real, payable Razorpay Payment Link -- this is what makes
+    a RETRY_PAYMENT decision an actual action rather than a label: the
+    resulting short_url is a genuine URL a customer could open and pay
+    through, not a description of what would happen. Retries transient
+    connection failures the same way create_order() does."""
+    client = _get_client()
+    if client is None:
+        return PaymentLinkResult(ok=False, error="Razorpay is not configured on this server "
+                                                   "(RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET not set).")
+    amount_paise = int(round(amount_rupees * 100))
+    customer = {}
+    if customer_name:
+        customer["name"] = customer_name
+    if customer_email:
+        customer["email"] = customer_email
+    if customer_contact:
+        customer["contact"] = customer_contact
+
+    last_exc: Exception | None = None
+    for attempt in range(_TRANSIENT_RETRY_ATTEMPTS):
+        try:
+            link = client.payment_link.create(data={
+                "amount": amount_paise,
+                "currency": currency,
+                "description": description,
+                "customer": customer,
+                "notify": {"sms": False, "email": False},  # we handle notification ourselves
+                "reminder_enable": False,
+            })
+            return PaymentLinkResult(ok=True, link_id=link["id"], short_url=link["short_url"])
+        except Exception as exc:
+            last_exc = exc
+            if _is_transient_network_error(exc) and attempt < _TRANSIENT_RETRY_ATTEMPTS - 1:
+                time.sleep(_TRANSIENT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            break
+    return PaymentLinkResult(ok=False, error=str(last_exc))
+
+
 def verify_payment_signature(order_id: str, payment_id: str, signature: str) -> bool:
     """True only if the signature genuinely matches order_id|payment_id
     signed with our Key Secret -- this is what stops someone from faking a

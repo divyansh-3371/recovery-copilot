@@ -200,9 +200,18 @@ async function pollForDecision(paymentId, attempt = 1, maxAttempts = 12) {
   if (data.found) {
     const actionLabel = ACTION_LABEL[data.action] || data.action;
     const reasoningHtml = (data.reasoning || []).map(r => `<li>${friendlyReasoning(r)}</li>`).join('');
+    let executionHtml = '';
+    if (data.executed && data.execution_detail && data.execution_detail.type === 'payment_link') {
+      executionHtml = `<p style="margin-top:8px;color:#17803d;">&#9989; A real payment link was created: ` +
+        `<a href="${data.execution_detail.short_url}" target="_blank" rel="noopener">${data.execution_detail.short_url}</a></p>`;
+    } else if (data.executed && data.execution_detail && data.execution_detail.type === 'email') {
+      executionHtml = `<p style="margin-top:8px;color:#17803d;">&#9989; A real email was sent to ${data.execution_detail.sent_to}</p>`;
+    } else if (data.execution_detail && data.execution_detail.error) {
+      executionHtml = `<p style="margin-top:8px;color:#b3261e;">&#9888; Execution failed: ${data.execution_detail.error}</p>`;
+    }
     showDecisionBox('ready',
       `<h3>Recovery Copilot's decision: <strong>${actionLabel}</strong></h3>` +
-      (reasoningHtml ? `<ul>${reasoningHtml}</ul>` : '')
+      (reasoningHtml ? `<ul>${reasoningHtml}</ul>` : '') + executionHtml
     );
     return;
   }
