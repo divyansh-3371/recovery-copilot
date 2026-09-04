@@ -5,13 +5,21 @@ import { ACTION_LABEL, humanize, formatMoney, displayReasoning, actionColor } fr
 export default function LiveTab({ apiBase }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
+  const [recovered, setRecovered] = useState({}); // transaction_id -> amount
 
   function refresh() {
     setRows(null);
+    setRecovered({});
     api.liveTransactions().then((d) => setRows(d.transactions)).catch((e) => setError(e.message));
   }
 
   useEffect(refresh, [apiBase]);
+
+  function handleRecovered(transactionId, amount) {
+    setRecovered((prev) => (prev[transactionId] != null ? prev : { ...prev, [transactionId]: amount }));
+  }
+
+  const totalRecovered = Object.values(recovered).reduce((sum, a) => sum + (a || 0), 0);
 
   return (
     <div>
@@ -67,10 +75,14 @@ export default function LiveTab({ apiBase }) {
                 {ACTION_LABEL[mostCommon(rows.map((r) => r.action))] || "—"}
               </div>
             </div>
+            <div className="kpi">
+              <div className="label">Recovered so far</div>
+              <div className="value" style={{ color: "var(--status-good)" }}>{formatMoney(totalRecovered)}</div>
+            </div>
           </div>
 
           {rows.map((r, i) => (
-            <LiveEntry key={i} entry={r} />
+            <LiveEntry key={i} entry={r} onRecovered={handleRecovered} />
           ))}
         </>
       )}
@@ -112,9 +124,20 @@ function mostCommon(arr) {
   return best;
 }
 
-function LiveEntry({ entry }) {
+function LiveEntry({ entry, onRecovered }) {
   const [showTechnical, setShowTechnical] = useState(false);
+  const [recovery, setRecovery] = useState(null);
   const ts = entry.timestamp ? new Date(entry.timestamp).toUTCString().replace("GMT", "UTC") : "";
+  const hasLink = entry.execution_detail && entry.execution_detail.link_id;
+
+  useEffect(() => {
+    if (!hasLink) return;
+    api.recoveryStatus(entry.transaction_id).then((d) => {
+      setRecovery(d);
+      if (d.recovered) onRecovered(entry.transaction_id, d.recovered_amount);
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry.transaction_id]);
 
   return (
     <div className="card" style={{ marginBottom: 12 }}>
@@ -125,6 +148,16 @@ function LiveEntry({ entry }) {
           {entry.recoverability_score != null && (
             <div style={{ color: "var(--ink-muted)", fontSize: "0.82rem" }}>
               Confidence: {Math.round(entry.recoverability_score * 100)}%
+            </div>
+          )}
+          {recovery && recovery.recovered && (
+            <div style={{ color: "var(--status-good)", fontWeight: 700, fontSize: "0.85rem", marginTop: 4 }}>
+              {"✅"} Recovered: {formatMoney(recovery.recovered_amount)}
+            </div>
+          )}
+          {recovery && hasLink && !recovery.recovered && (
+            <div style={{ color: "var(--ink-muted)", fontSize: "0.78rem", marginTop: 4 }}>
+              Not paid yet ({recovery.status || "pending"})
             </div>
           )}
         </div>

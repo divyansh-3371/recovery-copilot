@@ -46,4 +46,5 @@ export const api = {
   tryTransaction: (body) => request("/dashboard/try", { method: "POST", body: JSON.stringify(body) }),
   liveTransactions: () => request("/dashboard/live-transactions"),
   checkoutDecision: (paymentId) => request(`/checkout/decision/${paymentId}`),
+  recoveryStatus: (paymentId) => request(`/checkout/recovery-status/${paymentId}`),
 };

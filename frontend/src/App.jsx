@@ -55,24 +55,6 @@ export default function App() {
           />
         </div>
 
-        <div>
-          <label className="field-label">API service URL</label>
-          <input
-            type="text" value={apiBase}
-            onChange={(e) => handleApiBaseChange(e.target.value)}
-          />
-          {apiOk === false && (
-            <div style={{ color: "var(--status-critical)", fontSize: "0.78rem", marginTop: 4 }}>
-              Can't reach it -- is <code>uvicorn api:app</code> running?
-            </div>
-          )}
-          {apiOk === true && (
-            <div style={{ color: "var(--status-good)", fontSize: "0.78rem", marginTop: 4 }}>
-              Connected
-            </div>
-          )}
-        </div>
-
         <details style={{ fontSize: "0.82rem", color: "var(--ink-secondary)" }}>
           <summary style={{ cursor: "pointer", fontWeight: 600 }}>{"ℹ️"} About</summary>
           <p style={{ marginTop: 8 }}>
@@ -80,10 +62,23 @@ export default function App() {
             checkouts, failed subscriptions, and overdue invoices -- figures out the most likely
             reason, and takes the right action to recover the money.
           </p>
+          <details style={{ marginTop: 10 }}>
+            <summary style={{ cursor: "pointer" }}>Advanced</summary>
+            <label className="field-label" style={{ marginTop: 8 }}>API service URL</label>
+            <input
+              type="text" value={apiBase}
+              onChange={(e) => handleApiBaseChange(e.target.value)}
+            />
+          </details>
         </details>
       </aside>
 
       <main className="main">
+        {apiOk === false && (
+          <div className="status-box error" style={{ marginBottom: 16 }}>
+            Can't reach the backend right now -- check with support if this doesn't clear up.
+          </div>
+        )}
         {tab === "dashboard" && <DashboardTab seed={seed} />}
         {tab === "transactions" && <TransactionsTab seed={seed} />}
         {tab === "timeline" && <TimelineTab seed={seed} />}

@@ -240,3 +240,62 @@ def test_checkout_decision_surfaces_execution_detail(client, monkeypatch):
     assert data["found"] is True
     assert "executed" in data
     assert "execution_detail" in data
+
+
+# --- fetch_payment_link_status + /checkout/recovery-status/{id} -------------
+
+def test_fetch_payment_link_status_not_configured(monkeypatch):
+    monkeypatch.delenv("RAZORPAY_KEY_ID", raising=False)
+    monkeypatch.delenv("RAZORPAY_KEY_SECRET", raising=False)
+    result = razorpay_live.fetch_payment_link_status("plink_x")
+    assert result.ok is False
+
+
+def test_fetch_payment_link_status_paid(monkeypatch):
+    monkeypatch.setenv("RAZORPAY_KEY_ID", "rzp_test_fake")
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", "fake_secret")
+
+    class FakePaymentLinkResource:
+        def fetch(self, link_id):
+            assert link_id == "plink_x"
+            return {"status": "paid", "amount_paid": 50000}
+
+    class FakeClient:
+        payment_link = FakePaymentLinkResource()
+
+    monkeypatch.setattr(razorpay_live, "_get_client", lambda: FakeClient())
+    result = razorpay_live.fetch_payment_link_status("plink_x")
+    assert result.ok is True
+    assert result.status == "paid"
+    assert result.amount_paid_rupees == 500.0
+
+
+def test_recovery_status_no_link_yet(client, monkeypatch):
+    """An ESCALATE_HUMAN/STOP decision never creates a link -- recovery
+    status must say so cleanly, not error."""
+    api._live_audit.log(
+        transaction_id="pay_NOLINK", action="ESCALATE_HUMAN", reasoning=["x"],
+        extra={"execution_detail": None},
+    )
+    resp = client.get("/checkout/recovery-status/pay_NOLINK")
+    data = resp.json()
+    assert data["found"] is True
+    assert data["has_link"] is False
+    assert data["recovered"] is False
+
+
+def test_recovery_status_paid(client, monkeypatch):
+    api._live_audit.log(
+        transaction_id="pay_PAID1", action="RETRY_PAYMENT", reasoning=["x"],
+        extra={"execution_detail": {"type": "payment_link", "link_id": "plink_paid", "short_url": "https://rzp.io/i/x"}},
+    )
+    monkeypatch.setattr(
+        api.razorpay_live, "fetch_payment_link_status",
+        lambda link_id: razorpay_live.LinkStatusResult(ok=True, status="paid", amount_paid_rupees=1234.0),
+    )
+    resp = client.get("/checkout/recovery-status/pay_PAID1")
+    data = resp.json()
+    assert data["found"] is True
+    assert data["has_link"] is True
+    assert data["recovered"] is True
+    assert data["recovered_amount"] == 1234.0

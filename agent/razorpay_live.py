@@ -164,6 +164,34 @@ def create_payment_link(amount_rupees: float, description: str, customer_name: s
     return PaymentLinkResult(ok=False, error=str(last_exc))
 
 
+@dataclass
+class LinkStatusResult:
+    ok: bool
+    status: str | None = None  # "created" | "paid" | "expired" | "cancelled" | "partially_paid"
+    amount_paid_rupees: float | None = None
+    error: str | None = None
+
+
+def fetch_payment_link_status(link_id: str) -> LinkStatusResult:
+    """Checks whether money has actually come back through a Payment Link
+    this project created (via create_payment_link) -- this is what turns
+    "an action was taken" into "the action worked": a real recovered-amount
+    figure for the live dashboard, not just a decision label. amount_paid
+    comes back in paise, like everything else in Razorpay's API; converted
+    to rupees here so callers don't have to remember that."""
+    client = _get_client()
+    if client is None:
+        return LinkStatusResult(ok=False, error="Razorpay is not configured on this server.")
+    try:
+        link = client.payment_link.fetch(link_id)
+        return LinkStatusResult(
+            ok=True, status=link.get("status"),
+            amount_paid_rupees=float(link.get("amount_paid", 0)) / 100.0,
+        )
+    except Exception as exc:
+        return LinkStatusResult(ok=False, error=str(exc))
+
+
 def verify_payment_signature(order_id: str, payment_id: str, signature: str) -> bool:
     """True only if the signature genuinely matches order_id|payment_id
     signed with our Key Secret -- this is what stops someone from faking a

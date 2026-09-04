@@ -409,14 +409,34 @@ async def razorpay_webhook(request: Request) -> dict:
 
     elif decision.action == "SEND_MESSAGE":
         message_text = generate_message(row, decision)
+        # Also create a real payment link and fold it into the message --
+        # a nudge that doesn't actually let the customer pay isn't much of
+        # a nudge, and it's what makes SEND_MESSAGE's outcome (recovered or
+        # not) trackable the same way RETRY_PAYMENT's is, via the link's
+        # own status rather than a second, separate mechanism.
+        link = razorpay_live.create_payment_link(
+            amount_rupees=row_dict["amount"],
+            description=f"Complete your payment -- {row_dict['transaction_id']}",
+            customer_name=row_dict["customer_name"],
+            customer_email=customer_email,
+            customer_contact=customer_contact,
+        )
+        email_body = message_text
+        link_id = None
+        if link.ok:
+            email_body = f"{message_text}\n\nComplete your payment here: {link.short_url}"
+            link_id = link.link_id
         email = email_sender.send_email(
             to_address=customer_email,
             subject="Let's get your payment sorted",
-            body=message_text,
+            body=email_body,
         )
         if email.ok:
             executed = True
             execution_detail = {"type": "email", "sent_to": customer_email}
+            if link_id:
+                execution_detail["link_id"] = link_id
+                execution_detail["short_url"] = link.short_url
         else:
             execution_detail = {"type": "email", "error": email.error}
 
@@ -476,4 +496,32 @@ def checkout_decision(payment_id: str) -> dict:
         "failure_reason": str(row.get("failure_reason")) if row.get("failure_reason") is not None else None,
         "executed": bool(executed) if isinstance(executed, (bool,)) else False,
         "execution_detail": execution_detail if isinstance(execution_detail, dict) else None,
+    }
+
+
+@app.get("/checkout/recovery-status/{payment_id}")
+def recovery_status(payment_id: str) -> dict:
+    """Checks whether a real transaction was actually recovered -- i.e.
+    whether the Payment Link created for it (by RETRY_PAYMENT or
+    SEND_MESSAGE) has since been paid. Queries Razorpay live rather than
+    trusting anything cached, since payment can happen any time after the
+    original decision, not just in the seconds right after it."""
+    entry = _live_audit.for_transaction(payment_id)
+    if entry.empty:
+        return {"found": False}
+    row = entry.iloc[-1]
+    detail = row.get("execution_detail")
+    link_id = detail.get("link_id") if isinstance(detail, dict) else None
+    if not link_id:
+        return {"found": True, "has_link": False, "recovered": False, "recovered_amount": None}
+
+    status = razorpay_live.fetch_payment_link_status(link_id)
+    if not status.ok:
+        return {"found": True, "has_link": True, "recovered": False, "recovered_amount": None,
+                "error": status.error}
+    recovered = status.status == "paid"
+    return {
+        "found": True, "has_link": True, "status": status.status,
+        "recovered": recovered,
+        "recovered_amount": status.amount_paid_rupees if recovered else None,
     }

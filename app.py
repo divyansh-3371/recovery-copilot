@@ -17,6 +17,7 @@ import plotly.express as px
 import streamlit as st
 import streamlit.components.v1 as components
 
+from agent import razorpay_live
 from agent.audit import AuditTrail
 from agent.classifier import train_default_model
 from agent.cost_model import estimate_cost
@@ -662,6 +663,14 @@ with tab_live:
                         st.success(f"A real email was sent to {execution_detail.get('sent_to')}")
                     elif execution_detail.get("error"):
                         st.warning(f"Decision made, but execution failed: {execution_detail['error']}")
+
+                    link_id = execution_detail.get("link_id")
+                    if link_id:
+                        status = razorpay_live.fetch_payment_link_status(link_id)
+                        if status.ok and status.status == "paid":
+                            st.success(f"✅ Recovered: ₹{status.amount_paid_rupees:,.0f}")
+                        elif status.ok:
+                            st.caption(f"Not paid yet ({status.status})")
 
                 with st.expander("\U0001F527 Technical details"):
                     st.markdown(f"**Event:** `{field(entry, 'event')}` from Razorpay's webhook")
