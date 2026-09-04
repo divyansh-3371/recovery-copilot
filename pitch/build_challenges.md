@@ -215,3 +215,31 @@ alone, not worth pursuing" with the ₹150-floor reasoning updating to match,
 plus a visible recompute timestamp in the sidebar. Also added a "Randomize
 batch" button so the seed control's effect is a one-click, obvious gesture
 instead of something you have to already understand to notice.
+
+## 14. A live crash: two processes writing the same audit log raced
+
+**Problem:** the live dashboard crashed with `json.decoder.JSONDecodeError:
+Expecting value: line 1 column 1 (char 0)` inside `AuditTrail.load_all()`,
+reported with a real screenshot while the app was running. Root cause,
+confirmed by scanning the actual file: `data/audit_log.jsonl` is the
+default, shared path used by *both* the live Streamlit app and every CLI
+run (`run_batch.py`, `simulate_workflow.py`) -- and during this session
+both were run against the same file around the same time. `reset()`
+truncates the file (`open(path, "w")`); if that lands while another
+process is mid-read or mid-append, a single JSON entry can get split
+across two garbled lines. A direct scan turned up exactly that: 14
+corrupted lines out of 5,472, the textbook signature of an unguarded
+concurrent write, not a one-off fluke.
+
+**Fix:** `load_all()` now wraps each line's `json.loads()` in its own
+try/except and skips (with a logged warning) any line that fails to parse,
+instead of letting one bad line take down the entire audit trail read.
+Verified against the actual corrupted file on disk, not a synthetic
+repro: 5,458 of 5,472 lines loaded cleanly, the 14 bad ones skipped, no
+crash. Five new tests, including one built from a hand-crafted torn-line
+file reproducing the exact failure mode. Lesson: a shared file path
+written from more than one process needs defensive reads by default --
+"this worked in every test I ran" isn't the same claim as "this is safe
+under concurrent access," and this bug only ever showed up because a real
+person was clicking the real app while other processes were also touching
+its data.
