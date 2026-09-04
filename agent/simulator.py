@@ -40,6 +40,8 @@ def agent_outcome_multiplier(decision: Decision, failure_reason: str) -> float:
         return _CHANNEL_MULTIPLIER.get(decision.channel, 0.85)
     if decision.action == "ESCALATE_HUMAN":
         return 1.15
+    if decision.action == "ESCALATE_COLLECTIONS":
+        return 1.10  # formal pressure converts decently even on a severely overdue balance
     if decision.action == "ESCALATE_OPS":
         return 1.0  # avoided wasting retries into an outage; recovers once infra clears
     return 0.0  # STOP

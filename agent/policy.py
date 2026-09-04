@@ -5,13 +5,17 @@ escalation procedures with stopping rules" bar -- every stopping rule below
 is checked *before* any customer-facing action is chosen, and every decision
 carries an explicit, logged reason.
 
-Actions (bounded — the agent can only ever pick one of these five):
-  RETRY_PAYMENT   - reattempt the payment automatically (no customer contact)
-  SEND_MESSAGE     - a personalized nudge to the customer, on a chosen channel
-  ESCALATE_HUMAN   - hand off to a human recovery agent (high value / low confidence /
-                     a risk-engine block that needs manual review)
-  ESCALATE_OPS     - a systemic/infra issue was detected; alert ops, don't blame the customer
-  STOP             - do nothing further on this transaction, with a compliance reason
+Actions (bounded — the agent can only ever pick one of these six):
+  RETRY_PAYMENT       - reattempt the payment automatically (no customer contact)
+  SEND_MESSAGE         - a personalized nudge to the customer, on a chosen channel
+  ESCALATE_HUMAN       - hand off to a human recovery agent (high value / low confidence /
+                         a risk-engine block that needs manual review)
+  ESCALATE_COLLECTIONS - a severely overdue, high-value B2B invoice -- formal
+                         collections/legal process, distinct from a recovery
+                         agent's outreach (different cost, different tone,
+                         different compliance weight)
+  ESCALATE_OPS         - a systemic/infra issue was detected; alert ops, don't blame the customer
+  STOP                 - do nothing further on this transaction, with a compliance reason
 
 Every failure-reason-specific judgment call here (which reasons need the
 customer to act, which are safe to blind-retry, which are a compliance
@@ -45,6 +49,16 @@ QUIET_HOURS = set(range(22, 24)) | set(range(0, 8))
 # rules, systemic-issue/ops routing, risk-block review) so those still win,
 # but before every other failure-reason-driven branch.
 VALUE_TRIAGE_THRESHOLD = 75_000.0
+
+# A severely overdue invoice above this amount goes to formal
+# collections/legal, not a recovery agent's outreach -- checked before the
+# generic value-triage catch-all so this more specific, more appropriate
+# escalation wins for exactly the case it's meant for. Deliberately lower
+# than VALUE_TRIAGE_THRESHOLD: a 45+-day-overdue B2B invoice is already a
+# different kind of problem at a lower amount than an ordinary high-value
+# payment failure is.
+COLLECTIONS_REASON = "invoice_overdue_45plus"
+COLLECTIONS_AMOUNT_THRESHOLD = 15_000.0
 
 # kept as an alias -- simulator.py and existing callers refer to this name;
 # the actual data now lives in agent/decision_table.py
@@ -116,6 +130,16 @@ def decide(row: pd.Series, score: float, systemic_issues: dict[tuple[str, str], 
         d.reasoning.append(
             f"Failure reason '{row['failure_reason']}' is a risk/fraud-engine signal — "
             f"auto-retrying past it would itself be a compliance risk. Routing to human review, no auto-retry, no customer message."
+        )
+
+    # --- severely overdue + high-value B2B invoice: formal collections, not
+    # a recovery agent's outreach -- more specific than the generic value
+    # triage below, so it's checked first ------------------------------------
+    elif row["failure_reason"] == COLLECTIONS_REASON and row["amount"] >= COLLECTIONS_AMOUNT_THRESHOLD:
+        d.action = "ESCALATE_COLLECTIONS"
+        d.reasoning.append(
+            f"Invoice is 45+ days overdue at ₹{row['amount']:,.0f} — above the ₹{COLLECTIONS_AMOUNT_THRESHOLD:,.0f} "
+            f"threshold for formal collections/legal referral, rather than a recovery agent's outreach."
         )
 
     # --- cost-aware value triage: too much at stake to leave to the usual

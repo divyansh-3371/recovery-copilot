@@ -22,9 +22,10 @@ CHANNEL_COST = {
     "voice_hinglish": 8.00,
 }
 
-GATEWAY_RETRY_COST = 2.00      # a payment-gateway retry attempt
-HUMAN_AGENT_COST = 150.00      # a human recovery agent's time for one case
-OPS_ALERT_COST = 5.00          # routing a systemic issue to an ops/on-call channel
+GATEWAY_RETRY_COST = 2.00        # a payment-gateway retry attempt
+HUMAN_AGENT_COST = 150.00        # a human recovery agent's time for one case
+COLLECTIONS_COST = 500.00        # formal collections/legal referral -- higher overhead than a recovery agent
+OPS_ALERT_COST = 5.00            # routing a systemic issue to an ops/on-call channel
 
 # the naive baseline (a single blind retry/reminder for everyone) -- one
 # flat, generic action per transaction, regardless of outcome
@@ -38,6 +39,8 @@ def estimate_cost(decision: Decision) -> float:
         return CHANNEL_COST.get(decision.channel, 0.20)
     if decision.action == "ESCALATE_HUMAN":
         return HUMAN_AGENT_COST
+    if decision.action == "ESCALATE_COLLECTIONS":
+        return COLLECTIONS_COST
     if decision.action == "ESCALATE_OPS":
         return OPS_ALERT_COST
     return 0.0  # STOP -- no action taken, no cost incurred
