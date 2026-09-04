@@ -19,9 +19,10 @@
   h1 { font-size: 1.25rem; margin: 0 0 6px; }
   p.sub { color: #5b6b7c; font-size: 0.9rem; margin: 0 0 22px; line-height: 1.4; }
   label { font-size: 0.85rem; color: #33424f; font-weight: 600; display: block; margin-bottom: 6px; }
-  input[type="number"] {
+  input[type="number"], select {
     width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px;
-    border: 1px solid #d5dce3; font-size: 1rem; margin-bottom: 18px;
+    border: 1px solid #d5dce3; font-size: 1rem; margin-bottom: 18px; background: #fff;
+    font-family: inherit; color: inherit;
   }
   button {
     width: 100%; padding: 12px; border: none; border-radius: 8px; background: #2a78d6;
@@ -50,6 +51,12 @@
   </p>
   <label for="amount">Amount (INR)</label>
   <input id="amount" type="number" value="500" min="1" step="1">
+  <label for="customer-segment">Customer type</label>
+  <select id="customer-segment">
+    <option value="new">New customer</option>
+    <option value="returning" selected>Returning customer</option>
+    <option value="vip">VIP customer</option>
+  </select>
   <button id="pay-btn">Pay with Razorpay</button>
   <div id="status" class="status-info"></div>
 </div>
@@ -79,12 +86,14 @@ payBtn.onclick = async function () {
   payBtn.disabled = true;
   setStatus('Creating order...', 'status-info');
 
+  const customerSegment = document.getElementById('customer-segment').value;
+
   let orderData;
   try {
     const resp = await fetch('/checkout/create-order', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount: amount }),
+      body: JSON.stringify({ amount: amount, customer_segment: customerSegment }),
     });
     orderData = await resp.json();
     if (!resp.ok || !orderData.ok) {

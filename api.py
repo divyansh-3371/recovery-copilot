@@ -242,6 +242,18 @@ def decide_one(
 class CheckoutOrderIn(BaseModel):
     amount: float = Field(gt=0, le=10_000_000)
     receipt: str | None = Field(default=None, max_length=64)
+    # Razorpay has no concept of "customer segment" -- this is how
+    # checkout.html tells the agent which one applies, riding along in the
+    # Order's notes (verified live: Razorpay copies Order notes onto the
+    # resulting Payment entity, which is where the webhook reads it back --
+    # see agent/razorpay_live.py's map_webhook_payment_to_row()).
+    customer_segment: str = Field(default="returning")
+
+    @model_validator(mode="after")
+    def _check_customer_segment(self) -> "CheckoutOrderIn":
+        if self.customer_segment not in CUSTOMER_SEGMENTS:
+            raise ValueError(f"customer_segment must be one of {CUSTOMER_SEGMENTS}")
+        return self
 
 
 class CheckoutVerifyIn(BaseModel):
@@ -268,7 +280,10 @@ def checkout_create_order(body: CheckoutOrderIn) -> dict:
     real Razorpay order. No X-API-Key here: a customer's browser doesn't
     hold our service credential. Only the public Key ID is ever returned,
     never the Key Secret."""
-    result = razorpay_live.create_order(amount_rupees=body.amount, receipt=body.receipt)
+    result = razorpay_live.create_order(
+        amount_rupees=body.amount, receipt=body.receipt,
+        notes={"customer_segment": body.customer_segment},
+    )
     if not result.ok:
         raise HTTPException(status_code=503, detail=result.error)
     return {
@@ -353,6 +368,7 @@ async def razorpay_webhook(request: Request) -> dict:
             "event": event,
             "failure_reason": row_dict["failure_reason"],
             "amount": row_dict["amount"],
+            "customer_segment": row_dict["customer_segment"],
             "recoverability_score": score,
             "raw_error_reason": raw_error_reason,
             "raw_error_code": raw_error_code,

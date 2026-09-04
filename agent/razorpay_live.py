@@ -201,6 +201,16 @@ def map_webhook_payment_to_row(payment_entity: dict) -> dict:
     amount_paise = payment_entity.get("amount", 0) or 0
     email = payment_entity.get("email") or "customer@example.com"
 
+    # Razorpay has no native "customer segment" concept -- checkout.html
+    # collects it and passes it through as an Order note, which Razorpay
+    # copies onto the resulting Payment entity (verified live). Falls back
+    # to "returning" for a payment that didn't originate from our own
+    # checkout page (e.g. created directly via the Orders API elsewhere).
+    notes = payment_entity.get("notes") or {}
+    customer_segment = notes.get("customer_segment", "returning")
+    if customer_segment not in ("new", "returning", "vip"):
+        customer_segment = "returning"
+
     return {
         "transaction_id": payment_entity.get("id", "unknown_payment"),
         "customer_id": payment_entity.get("contact") or "unknown",
@@ -210,9 +220,7 @@ def map_webhook_payment_to_row(payment_entity: dict) -> dict:
         "risk_type": "payment_failure",
         "failure_reason": failure_reason,
         "payment_method": payment_method,
-        # not knowable from a webhook payload alone -- a real integration
-        # would look this customer up in the merchant's own CRM/database
-        "customer_segment": "returning",
+        "customer_segment": customer_segment,
         "previous_attempts": 0,
         "do_not_contact": False,
         "customer_local_hour": 12,
