@@ -169,6 +169,18 @@ project also has a **real** integration, built against the official
   This is what makes the earlier "is it doing real-time processing"
   question concretely true once a Razorpay account is connected, rather
   than only true of the synthetic-batch pipeline.
+- **The dashboard's `🔴 Live` tab** — reads `data/live_audit_log.jsonl` and
+  shows every real transaction Razorpay has actually sent, in the same
+  plain-language style as the rest of the dashboard (amount, reason,
+  customer type, action, confidence, reasoning), not just a JSON file to
+  grep through.
+- **Customer type on checkout** — `checkout.html` asks (new/returning/VIP),
+  passed through as a Razorpay Order note and read back off the resulting
+  Payment on the webhook side (`agent/razorpay_live.py`) — verified live
+  that Razorpay actually carries Order notes through to the Payment entity,
+  since that isn't clearly documented anywhere. Without this, every real
+  transaction would score as if the customer were anonymous, since Razorpay
+  itself has no concept of customer segment.
 
 Fully covered by tests that don't need live credentials — the signature
 math is the same HMAC-SHA256 Razorpay's SDK uses internally, so
