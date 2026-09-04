@@ -164,8 +164,10 @@ with tab_live:
         live_hour = st.slider("Customer's local hour right now", 0, 23, 12, key="live_hour")
         live_dnc = st.checkbox("Customer opted out (do-not-contact)", key="live_dnc")
         st.caption("Tip: set attempts to 3+ to see the max-attempts stopping rule fire, "
-                   "or pick a (payment method, reason) pair matching a banner on the "
-                   "Overview tab to see it route to ops instead of the customer.")
+                   "pick a (payment method, reason) pair matching a banner on the "
+                   "Overview tab to see it route to ops instead of the customer, or push "
+                   "the amount above ₹75,000 on any reason to see value-based triage "
+                   "override the usual routing to a human agent.")
 
     live_row = pd.Series({
         "transaction_id": "live_test_0001",
