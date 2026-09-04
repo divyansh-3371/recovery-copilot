@@ -201,8 +201,9 @@ model = get_model()
 st.title("\U0001F4B8 Recovery Copilot")
 st.caption("Automatically recovers failed payments, abandoned checkouts, and overdue invoices — see exactly what happened and why.")
 
-tab_dashboard, tab_transactions, tab_timeline, tab_try = st.tabs(
-    ["\U0001F3E0 Dashboard", "\U0001F4CB Transactions", "\U0001F5D3️ Recovery timeline", "\U0001F9EA Try a transaction"]
+tab_dashboard, tab_transactions, tab_timeline, tab_try, tab_live = st.tabs(
+    ["\U0001F3E0 Dashboard", "\U0001F4CB Transactions", "\U0001F5D3️ Recovery timeline",
+     "\U0001F9EA Try a transaction", "\U0001F534 Live"]
 )
 
 # =============================================================== DASHBOARD ==
@@ -558,3 +559,87 @@ with tab_try:
             st.code(f"{live_call.method} {live_call.path}", language="text")
             st.json(live_call.payload)
             st.caption(live_call.note)
+
+# ==================================================================== LIVE ==
+with tab_live:
+    st.subheader("Real payments, real time")
+    st.caption(
+        "Everything above runs on a simulated batch, so the numbers are reproducible for a demo. "
+        "This tab is different: it shows actual payment failures from a connected Razorpay account, "
+        "the moment Razorpay reports them — scored and decided by the same engine, with no human "
+        "involved in between."
+    )
+
+    if st.button("\U0001F504 Refresh", key="live_refresh"):
+        st.rerun()
+
+    live_audit = AuditTrail(path="data/live_audit_log.jsonl")
+    live_df = live_audit.load_all()
+
+    if live_df.empty:
+        st.info(
+            "No real transactions yet. Start the API service (`uvicorn api:app`), open **/checkout** "
+            "in a browser with a Razorpay Test Mode account connected, and pay with one of "
+            "[Razorpay's test failure cards](https://razorpay.com/docs/payments/payments/test-card-details/). "
+            "See `pitch/razorpay_live_setup.md` for the full setup."
+        )
+    else:
+        live_df = live_df.sort_values("timestamp", ascending=False).reset_index(drop=True)
+
+        lk1, lk2, lk3 = st.columns(3)
+        lk1.metric("Real transactions handled", len(live_df))
+        lk2.metric("Total amount involved", f"₹{live_df['amount'].sum():,.0f}")
+        most_common_action = live_df["action"].mode().iat[0] if not live_df["action"].mode().empty else "—"
+        lk3.metric("Most common response", ACTION_LABEL.get(most_common_action, most_common_action))
+
+        st.write("")
+        def field(entry, key, default=""):
+            """entry.get(key, default) but also treats NaN as missing --
+            older log lines predate a field (e.g. customer_segment was
+            added after the first few real entries), which pandas
+            represents as NaN rather than a missing key."""
+            val = entry.get(key, default)
+            return default if (val is None or (isinstance(val, float) and pd.isna(val))) else val
+
+        for _, entry in live_df.iterrows():
+            action = field(entry, "action")
+            ts_raw = field(entry, "timestamp")
+            try:
+                ts = pd.Timestamp(ts_raw).strftime("%b %d, %H:%M:%S UTC") if ts_raw else ""
+            except (ValueError, TypeError):
+                ts = str(ts_raw)
+            with st.container(border=True):
+                h1, h2 = st.columns([3, 1])
+                with h1:
+                    action_color = STATUS_CRITICAL if action == "STOP" else STATUS_GOOD
+                    segment = field(entry, "customer_segment", "unknown")
+                    st.markdown(
+                        f"**₹{field(entry, 'amount', 0):,.0f}** · "
+                        f"{humanize(str(field(entry, 'failure_reason')))} · "
+                        f"{str(segment).capitalize()} customer &nbsp; "
+                        f'→ <span style="color:{action_color}">**{ACTION_LABEL.get(action, action)}**</span>',
+                        unsafe_allow_html=True,
+                    )
+                    score = field(entry, "recoverability_score", None)
+                    if score is not None:
+                        st.caption(f"Confidence: {float(score) * 100:.0f}%")
+                with h2:
+                    st.caption(ts)
+                    st.caption(f"`{field(entry, 'transaction_id')}`")
+
+                reasoning = field(entry, "reasoning", None)
+                if isinstance(reasoning, list) and reasoning:
+                    st.markdown("**Why:**")
+                    for r in reasoning:
+                        st.markdown(f"- {display_reasoning(str(r))}")
+
+                with st.expander("\U0001F527 Technical details"):
+                    st.markdown(f"**Event:** `{field(entry, 'event')}` from Razorpay's webhook")
+                    st.markdown(
+                        f"**Raw Razorpay error:** `{field(entry, 'raw_error_reason', '—')}` / "
+                        f"`{field(entry, 'raw_error_code', '—')}` — {field(entry, 'raw_error_description', '—')}"
+                    )
+                    st.caption(
+                        "Razorpay Test Mode reports the same generic reason for every simulated failure "
+                        "type — see agent/razorpay_live.py for what's been verified about this."
+                    )
