@@ -20,11 +20,22 @@ def test_max_attempts_cap_stops_even_with_high_score():
     assert d.stopping_rule_triggered == "max_attempts_reached"
 
 
-def test_uneconomical_amount_stops_for_non_vip():
-    row = make_row(amount=50.0, customer_segment="new")
+def test_uneconomical_amount_stops_for_returning_customer():
+    # Returning: already acquired, no sunk-CAC recapture argument for a
+    # tiny amount -- the one segment with no exemption from this floor.
+    row = make_row(amount=50.0, customer_segment="returning")
     d = decide(row, score=0.95, systemic_issues={})
     assert d.action == "STOP"
     assert d.stopping_rule_triggered == "uneconomical_amount"
+
+
+def test_uneconomical_amount_floor_does_not_apply_to_new_customer():
+    # New: the sunk acquisition-cost argument applies here too, same as
+    # the low-score branch -- a tiny amount alone shouldn't stop this.
+    row = make_row(amount=50.0, customer_segment="new", risk_type="payment_failure",
+                    failure_reason="bank_timeout")
+    d = decide(row, score=0.95, systemic_issues={})
+    assert d.stopping_rule_triggered != "uneconomical_amount"
 
 
 def test_uneconomical_amount_floor_does_not_apply_to_vip():
@@ -196,3 +207,47 @@ def test_value_triage_never_overrides_systemic_issue_routing():
                            recent_count=30, recent_rate_per_day=30.0, baseline_rate_per_day=1.0, ratio=30.0)
     d = decide(row, score=0.9, systemic_issues={("netbanking", "bank_timeout"): issue})
     assert d.action == "ESCALATE_OPS"
+
+
+def test_systemic_issue_overrides_do_not_contact():
+    """Outage detection never contacts the customer either -- a
+    do-not-contact flag shouldn't hide a real infra problem from ops."""
+    row = make_row(payment_method="netbanking", failure_reason="bank_timeout", do_not_contact=True)
+    from agent.root_cause import SystemicIssue
+    issue = SystemicIssue(payment_method="netbanking", failure_reason="bank_timeout",
+                           recent_count=30, recent_rate_per_day=30.0, baseline_rate_per_day=1.0, ratio=30.0)
+    d = decide(row, score=0.9, systemic_issues={("netbanking", "bank_timeout"): issue})
+    assert d.action == "ESCALATE_OPS"
+
+
+def test_systemic_issue_overrides_uneconomical_amount():
+    """A tiny transaction failing during a genuine outage must still
+    surface to ops -- outage visibility can't depend on this one
+    transaction's economics."""
+    row = make_row(amount=10.0, payment_method="netbanking", failure_reason="bank_timeout")
+    from agent.root_cause import SystemicIssue
+    issue = SystemicIssue(payment_method="netbanking", failure_reason="bank_timeout",
+                           recent_count=30, recent_rate_per_day=30.0, baseline_rate_per_day=1.0, ratio=30.0)
+    d = decide(row, score=0.9, systemic_issues={("netbanking", "bank_timeout"): issue})
+    assert d.action == "ESCALATE_OPS"
+
+
+def test_max_attempts_escalates_to_human_for_vip():
+    row = make_row(previous_attempts=3, customer_segment="vip")
+    d = decide(row, score=0.95, systemic_issues={})
+    assert d.action == "ESCALATE_HUMAN"
+    assert d.stopping_rule_triggered is None
+
+
+def test_max_attempts_escalates_to_human_for_high_value():
+    row = make_row(previous_attempts=3, amount=50_000.0, customer_segment="returning")
+    d = decide(row, score=0.95, systemic_issues={})
+    assert d.action == "ESCALATE_HUMAN"
+    assert d.stopping_rule_triggered is None
+
+
+def test_max_attempts_still_stops_for_low_value_returning_customer():
+    row = make_row(previous_attempts=3, amount=2000.0, customer_segment="returning")
+    d = decide(row, score=0.95, systemic_issues={})
+    assert d.action == "STOP"
+    assert d.stopping_rule_triggered == "max_attempts_reached"

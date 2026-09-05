@@ -93,26 +93,35 @@ def _choose_channel(row: pd.Series, score: float) -> str:
     return "sms"
 
 
+def _exhausted_stop_or_escalate(d: Decision, row: pd.Series, stopping_rule: str, exhausted_note: str) -> Decision:
+    """Shared by the max-attempts cap and both retry-sequence-exhausted
+    paths: automation running out of budget on a high-value or VIP case
+    means automation wasn't enough -- not that recovery is impossible. A
+    human might still land it (a payment plan, an alternate method); only
+    a lower-stakes case truly stops here."""
+    if row["customer_segment"] == "vip" or row["amount"] >= HIGH_VALUE_AMOUNT:
+        d.action = "ESCALATE_HUMAN"
+        d.reasoning.append(
+            f"{exhausted_note} on a ₹{row['amount']:.0f}/{row['customer_segment']} case — "
+            f"worth a human where automation didn't land it."
+        )
+    else:
+        d.stopping_rule_triggered = stopping_rule
+        d.reasoning.append(f"{exhausted_note} — stopping rather than retrying/messaging indefinitely.")
+    return d
+
+
 def decide(row: pd.Series, score: float, systemic_issues: dict[tuple[str, str], SystemicIssue]) -> Decision:
     d = Decision(transaction_id=row["transaction_id"], action="STOP", recoverability_score=score)
 
-    # --- stopping rules, checked first, in priority order -------------------
-    if row["do_not_contact"]:
-        d.stopping_rule_triggered = "do_not_contact"
-        d.reasoning.append("Customer is marked do-not-contact — no outreach permitted (compliance).")
-        return d
-
-    if row["previous_attempts"] >= MAX_ATTEMPTS:
-        d.stopping_rule_triggered = "max_attempts_reached"
-        d.reasoning.append(f"Already at {row['previous_attempts']} attempts — cap of {MAX_ATTEMPTS} reached, stopping.")
-        return d
-
-    if row["amount"] < MIN_ECONOMICAL_AMOUNT and row["customer_segment"] != "vip":
-        d.stopping_rule_triggered = "uneconomical_amount"
-        d.reasoning.append(f"Amount ₹{row['amount']:.0f} is below the ₹{MIN_ECONOMICAL_AMOUNT:.0f} recovery-cost floor.")
-        return d
-
-    # --- systemic / root-cause check ----------------------------------------
+    # --- systemic / root-cause check -- checked before anything
+    # customer-specific: detecting and reporting an infrastructure problem
+    # is completely orthogonal to any one customer's compliance
+    # attributes or this transaction's economics, and (like ESCALATE_OPS
+    # itself) never contacts the customer -- so a tiny transaction or a
+    # do-not-contact customer failing during a genuine outage must still
+    # surface it to ops, not get silently absorbed by an unrelated
+    # stopping rule before anyone finds out there's an outage at all. ----
     issue_key = (row["payment_method"], row["failure_reason"])
     if issue_key in systemic_issues:
         issue = systemic_issues[issue_key]
@@ -120,6 +129,28 @@ def decide(row: pd.Series, score: float, systemic_issues: dict[tuple[str, str], 
         d.systemic_issue_note = issue.note
         d.reasoning.append(issue.note)
         d.reasoning.append("Skipping customer-facing retry/message until infra issue clears (avoids blaming the customer).")
+        return d
+
+    # --- stopping rules, checked next, in priority order --------------------
+    if row["do_not_contact"]:
+        d.stopping_rule_triggered = "do_not_contact"
+        d.reasoning.append("Customer is marked do-not-contact — no outreach permitted (compliance).")
+        return d
+
+    if row["previous_attempts"] >= MAX_ATTEMPTS:
+        return _exhausted_stop_or_escalate(
+            d, row, "max_attempts_reached",
+            f"Already at {row['previous_attempts']} attempts (cap {MAX_ATTEMPTS} reached)",
+        )
+
+    # Exempts vip (an established relationship worth protecting) and new
+    # (the sunk acquisition-cost argument -- same reasoning as the
+    # low-score branch further down) -- a returning customer's tiny failed
+    # payment is the only case with neither an existing relationship to
+    # protect nor a recapture argument for the amount involved.
+    if row["amount"] < MIN_ECONOMICAL_AMOUNT and row["customer_segment"] not in ("vip", "new"):
+        d.stopping_rule_triggered = "uneconomical_amount"
+        d.reasoning.append(f"Amount ₹{row['amount']:.0f} is below the ₹{MIN_ECONOMICAL_AMOUNT:.0f} recovery-cost floor.")
         return d
 
     # --- risk/fraud-engine block: NEVER auto-retry, always human review ----
@@ -163,9 +194,7 @@ def decide(row: pd.Series, score: float, systemic_issues: dict[tuple[str, str], 
     elif score >= HIGH_SCORE and row["risk_type"] == "subscription_failure" and row["failure_reason"] in MANDATE_REASONS:
         step = next_retry_step(row["previous_attempts"], is_mandate=True, failure_reason=row["failure_reason"])
         if step is None:
-            d.stopping_rule_triggered = "retry_sequence_exhausted"
-            d.reasoning.append("Mandate retry sequence exhausted with no success — stopping rather than retrying indefinitely.")
-            return d
+            return _exhausted_stop_or_escalate(d, row, "retry_sequence_exhausted", "Mandate retry sequence exhausted with no success")
         if step.method == "manual_link":
             d.action = "SEND_MESSAGE"
             d.channel = _choose_channel(row, score)
@@ -179,9 +208,7 @@ def decide(row: pd.Series, score: float, systemic_issues: dict[tuple[str, str], 
     elif score >= HIGH_SCORE and row["risk_type"] == "payment_failure":
         step = next_retry_step(row["previous_attempts"], is_mandate=False, failure_reason=row["failure_reason"])
         if step is None:
-            d.stopping_rule_triggered = "retry_sequence_exhausted"
-            d.reasoning.append("Payment retry sequence exhausted with no success — stopping rather than retrying indefinitely.")
-            return d
+            return _exhausted_stop_or_escalate(d, row, "retry_sequence_exhausted", "Payment retry sequence exhausted with no success")
         d.action = "RETRY_PAYMENT"
         d.retry_delay_hours = step.delay_hours
         d.retry_method = step.method
