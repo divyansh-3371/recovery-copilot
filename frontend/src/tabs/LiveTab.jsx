@@ -2,18 +2,36 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { ACTION_LABEL, humanize, formatMoney, displayReasoning, actionColor } from "../labels";
 
+const AUTO_REFRESH_MS = 4000;
+const RECOVERY_CHECK_MS = 8000;
+
 export default function LiveTab({ apiBase }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
   const [recovered, setRecovered] = useState({}); // transaction_id -> amount
 
-  function refresh() {
-    setRows(null);
-    setRecovered({});
+  // Silent: updates the list in place, no "Loading…" flash and no reset of
+  // per-transaction recovery status already known -- meant to run every
+  // few seconds in the background without disrupting whatever the user is
+  // looking at (e.g. mid-payment in the embedded checkout below).
+  function silentRefresh() {
     api.liveTransactions().then((d) => setRows(d.transactions)).catch((e) => setError(e.message));
   }
 
-  useEffect(refresh, [apiBase]);
+  // Hard: the manual "Refresh" button and the initial load -- also clears
+  // any stale recovered-amount tracking so it recomputes from scratch.
+  function refresh() {
+    setRows(null);
+    setRecovered({});
+    silentRefresh();
+  }
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(silentRefresh, AUTO_REFRESH_MS);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBase]);
 
   function handleRecovered(transactionId, amount) {
     setRecovered((prev) => (prev[transactionId] != null ? prev : { ...prev, [transactionId]: amount }));
@@ -81,8 +99,8 @@ export default function LiveTab({ apiBase }) {
             </div>
           </div>
 
-          {rows.map((r, i) => (
-            <LiveEntry key={i} entry={r} onRecovered={handleRecovered} />
+          {rows.map((r) => (
+            <LiveEntry key={r.transaction_id} entry={r} onRecovered={handleRecovered} />
           ))}
         </>
       )}
@@ -160,10 +178,23 @@ function LiveEntry({ entry, onRecovered }) {
 
   useEffect(() => {
     if (!hasLink) return;
-    api.recoveryStatus(entry.transaction_id).then((d) => {
-      setRecovery(d);
-      if (d.recovered) onRecovered(entry.transaction_id, d.recovered_amount);
-    }).catch(() => {});
+    let cancelled = false;
+    function check() {
+      api.recoveryStatus(entry.transaction_id).then((d) => {
+        if (cancelled) return;
+        setRecovery(d);
+        if (d.recovered) {
+          onRecovered(entry.transaction_id, d.recovered_amount);
+          clearInterval(id); // it's paid -- stop spending API calls checking further
+        }
+      }).catch(() => {});
+    }
+    check();
+    // Keeps checking -- a link created now might get paid minutes later,
+    // and this is what makes "recovered" genuinely live rather than a
+    // one-time snapshot at the moment the entry first appeared.
+    const id = setInterval(check, RECOVERY_CHECK_MS);
+    return () => { cancelled = true; clearInterval(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entry.transaction_id]);
 
