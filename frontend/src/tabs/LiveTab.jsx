@@ -38,6 +38,7 @@ export default function LiveTab({ apiBase }) {
   }
 
   const totalRecovered = Object.values(recovered).reduce((sum, a) => sum + (a || 0), 0);
+  const totalSpent = (rows || []).reduce((sum, r) => sum + (r.intervention_cost || 0), 0);
 
   return (
     <div>
@@ -96,6 +97,15 @@ export default function LiveTab({ apiBase }) {
             <div className="kpi">
               <div className="label">Recovered so far</div>
               <div className="value" style={{ color: "var(--status-good)" }}>{formatMoney(totalRecovered)}</div>
+            </div>
+            <div className="kpi">
+              <div className="label">Spent recovering it</div>
+              <div className="value">{formatMoney(totalSpent)}</div>
+              {totalRecovered > 0 && (
+                <div className="delta" style={{ color: "var(--ink-muted)" }}>
+                  {((totalSpent / totalRecovered) * 100).toFixed(1)}% of what came back
+                </div>
+              )}
             </div>
           </div>
 
@@ -205,9 +215,11 @@ function LiveEntry({ entry, onRecovered }) {
         <div>
           <strong>{formatMoney(entry.amount)}</strong> · {humanize(entry.failure_reason)} · {humanize(entry.customer_segment || "unknown")} customer
           {" "}→ <span style={{ color: actionColor(entry.action), fontWeight: 700 }}>{ACTION_LABEL[entry.action] || entry.action}</span>
-          {entry.recoverability_score != null && (
+          {(entry.recoverability_score != null || entry.intervention_cost != null) && (
             <div style={{ color: "var(--ink-muted)", fontSize: "0.82rem" }}>
-              Confidence: {Math.round(entry.recoverability_score * 100)}%
+              {entry.recoverability_score != null && <>Confidence: {Math.round(entry.recoverability_score * 100)}%</>}
+              {entry.recoverability_score != null && entry.intervention_cost != null && " · "}
+              {entry.intervention_cost != null && <>Cost to recover: {formatMoney(entry.intervention_cost)}</>}
             </div>
           )}
           {recovery && recovery.recovered && (

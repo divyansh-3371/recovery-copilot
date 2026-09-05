@@ -97,7 +97,7 @@ export default function TransactionsTab({ seed }) {
             <thead>
               <tr>
                 <th>Source</th><th>Transaction</th><th>Issue</th><th>Reason</th><th>Amount</th>
-                <th>Customer</th><th>Confidence</th><th>Action</th><th>Result</th>
+                <th>Customer</th><th>Confidence</th><th>Action</th><th>Cost to recover</th><th>Result</th>
               </tr>
             </thead>
             <tbody>
@@ -115,6 +115,7 @@ export default function TransactionsTab({ seed }) {
                   <td>{humanize(r.customer_segment)}</td>
                   <td>{r.recoverability_score != null ? `${Math.round(r.recoverability_score * 100)}%` : "—"}</td>
                   <td style={{ color: actionColor(r.agent_action), fontWeight: 600 }}>{ACTION_LABEL[r.agent_action] || r.agent_action}</td>
+                  <td>{r.intervention_cost != null ? formatMoney(r.intervention_cost) : "—"}</td>
                   <td>{r.agent_resolved ? "✅ Recovered" : "In progress"}</td>
                 </tr>
               ))}
@@ -131,6 +132,7 @@ export default function TransactionsTab({ seed }) {
               <strong>Customer:</strong> {humanize(detail.customer_segment || "unknown")}</p>
             <p><strong>What we did:</strong> <span style={{ color: actionColor(detail.action), fontWeight: 700 }}>{ACTION_LABEL[detail.action] || detail.action}</span></p>
             {detail.recoverability_score != null && <p><strong>Confidence:</strong> {Math.round(detail.recoverability_score * 100)}%</p>}
+            {detail.intervention_cost != null && <p><strong>Cost to recover:</strong> {formatMoney(detail.intervention_cost)}</p>}
             {Array.isArray(detail.reasoning) && detail.reasoning.length > 0 && (
               <p>
                 <strong>Why: </strong>
@@ -279,6 +281,7 @@ function normalizeLiveRow(entry) {
     recoverability_score: entry.recoverability_score,
     agent_action: entry.action,
     agent_resolved: false, // real recovery status lives on the Live tab's own polling; kept simple here
+    intervention_cost: entry.intervention_cost,
     _source: "live",
     _liveEntry: entry,
   };

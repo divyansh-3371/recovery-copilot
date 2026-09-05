@@ -65,6 +65,7 @@ from agent import email_sender, live_customer_history, razorpay_live
 from agent.audit import AuditTrail
 from agent.messenger import generate_message
 from agent.classifier import RecoverabilityModel, train_default_model
+from agent.cost_model import estimate_cost
 from agent.pipeline import run_pipeline
 from agent.policy import QUIET_HOURS, decide as policy_decide
 from agent.rate_limiter import RateLimiter
@@ -392,6 +393,11 @@ async def razorpay_webhook(request: Request) -> dict:
     model = get_model()
     score = float(model.predict_proba(pd.DataFrame([row]))[0])
     decision = policy_decide(row, score, systemic_issues={})
+    # What this decision costs to carry out (₹0 for STOP) -- the same
+    # per-channel/action unit-cost model the synthetic batch's proof layer
+    # uses, so a real transaction's "what did this cost to recover" answer
+    # is computed identically, not eyeballed separately.
+    intervention_cost = estimate_cost(decision)
 
     # --- execution -----------------------------------------------------
     # Turns the decision into a real action, for the two cases where one
@@ -519,12 +525,13 @@ async def razorpay_webhook(request: Request) -> dict:
             "executed": executed,
             "execution_detail": execution_detail,
             "message": message_text,
+            "intervention_cost": intervention_cost,
         },
     )
 
     return {
         "status": "processed", "action": decision.action, "recoverability_score": score,
-        "executed": executed, "execution_detail": execution_detail,
+        "executed": executed, "execution_detail": execution_detail, "intervention_cost": intervention_cost,
     }
 
 

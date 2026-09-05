@@ -82,6 +82,15 @@ export default function DashboardTab({ seed }) {
           <div className="value">{summary.agent_recovery_rate.toFixed(0)}%</div>
         </div>
         <div className="kpi">
+          <div className="label">Spent recovering it</div>
+          <div className="value">{formatMoney(summary.agent_intervention_cost)}</div>
+          {summary.agent_recovered > 0 && (
+            <div className="delta" style={{ color: "var(--ink-muted)" }}>
+              {((summary.agent_intervention_cost / summary.agent_recovered) * 100).toFixed(1)}% of what came back
+            </div>
+          )}
+        </div>
+        <div className="kpi">
           <div className="label">Currently in progress</div>
           <div className="value">{in_progress}</div>
         </div>

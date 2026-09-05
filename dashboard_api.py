@@ -140,7 +140,8 @@ def transactions(
     rows = view[[
         "transaction_id", "risk_type", "failure_reason", "amount", "customer_segment",
         "recoverability_score", "agent_action", "agent_resolved", "agent_recovered_amount",
-    ]].to_dict(orient="records")
+        "agent_intervention_cost",
+    ]].rename(columns={"agent_intervention_cost": "intervention_cost"}).to_dict(orient="records")
     return _clean({"transactions": rows, "count": len(rows)})
 
 
@@ -286,5 +287,6 @@ def live_transactions() -> dict:
         "transaction_id", "timestamp", "action", "reasoning", "failure_reason", "amount",
         "customer_segment", "recoverability_score", "event", "raw_error_reason",
         "raw_error_code", "raw_error_description", "executed", "execution_detail",
+        "intervention_cost",
     ] if c in df.columns]
     return _clean({"transactions": df[cols].to_dict(orient="records")})
