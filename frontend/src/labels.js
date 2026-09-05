@@ -58,6 +58,21 @@ export function displayReasoning(text) {
   return out;
 }
 
+// A one-line version of the (cleaned) reasoning for the primary view --
+// the full, precise text stays available behind a "Show more" toggle
+// rather than being hidden entirely or dumped in full by default.
+export function shortReason(reasoning) {
+  if (!Array.isArray(reasoning) || reasoning.length === 0) return "";
+  const cleaned = displayReasoning(reasoning[0]);
+  const cut = Math.min(
+    ...[". ", " — ", ": "].map((sep) => { const i = cleaned.indexOf(sep); return i === -1 ? Infinity : i; })
+  );
+  if (cut === Infinity || cut > 80) {
+    return cleaned.length > 90 ? cleaned.slice(0, 87) + "…" : cleaned;
+  }
+  return cleaned.slice(0, cut) + "…";
+}
+
 export function friendlyFeature(feat) {
   const name = feat.includes("__") ? feat.split("__").slice(1).join("__") : feat;
   const numeric = {

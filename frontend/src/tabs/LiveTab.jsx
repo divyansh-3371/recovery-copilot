@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { ACTION_LABEL, humanize, formatMoney, displayReasoning, actionColor } from "../labels";
+import { ACTION_LABEL, humanize, formatMoney, displayReasoning, shortReason, actionColor } from "../labels";
 
 const AUTO_REFRESH_MS = 4000;
 const RECOVERY_CHECK_MS = 8000;
@@ -139,7 +139,7 @@ function ExecutionStatus({ executed, detail }) {
         {"✅"} A real Razorpay Payment Link was created.
         {payNow}
         <div style={{ marginTop: 6, fontSize: "0.82rem" }}>
-          {detail.emailed ? "✅ Also emailed to the customer, so it doesn't depend on them seeing this page."
+          {detail.emailed ? `✅ Also emailed to ${detail.sent_to}`
             : `⚠️ Not emailed${detail.email_error ? `: ${detail.email_error}` : " -- no email delivery configured."}`}
         </div>
       </div>
@@ -172,6 +172,7 @@ function mostCommon(arr) {
 
 function LiveEntry({ entry, onRecovered }) {
   const [showTechnical, setShowTechnical] = useState(false);
+  const [showFullReasoning, setShowFullReasoning] = useState(false);
   const [recovery, setRecovery] = useState(null);
   const ts = entry.timestamp ? new Date(entry.timestamp).toUTCString().replace("GMT", "UTC") : "";
   const hasLink = entry.execution_detail && entry.execution_detail.link_id;
@@ -227,12 +228,23 @@ function LiveEntry({ entry, onRecovered }) {
       </div>
 
       {Array.isArray(entry.reasoning) && entry.reasoning.length > 0 && (
-        <>
-          <strong style={{ display: "block", marginTop: 10 }}>Why:</strong>
-          <ul className="reasoning-list">
-            {entry.reasoning.map((r, i) => <li key={i}>{displayReasoning(r)}</li>)}
-          </ul>
-        </>
+        <div style={{ marginTop: 10, fontSize: "0.9rem", color: "var(--ink-secondary)" }}>
+          <strong>Why: </strong>
+          {showFullReasoning ? (
+            <ul className="reasoning-list" style={{ marginTop: 6 }}>
+              {entry.reasoning.map((r, i) => <li key={i}>{displayReasoning(r)}</li>)}
+            </ul>
+          ) : (
+            <span>{shortReason(entry.reasoning)}</span>
+          )}
+          {" "}
+          <button
+            onClick={() => setShowFullReasoning(!showFullReasoning)}
+            style={{ background: "none", border: "none", color: "var(--blue)", cursor: "pointer", fontSize: "0.85em", padding: 0 }}
+          >
+            {showFullReasoning ? "Show less" : "Show more"}
+          </button>
+        </div>
       )}
 
       <ExecutionStatus executed={entry.executed} detail={entry.execution_detail} />
@@ -242,6 +254,9 @@ function LiveEntry({ entry, onRecovered }) {
       </button>
       {showTechnical && (
         <div style={{ marginTop: 10, fontSize: "0.85rem" }}>
+          {Array.isArray(entry.reasoning) && entry.reasoning.length > 0 && (
+            <p><strong>Raw reasoning string(s):</strong> {entry.reasoning.map((r) => `"${r}"`).join("; ")}</p>
+          )}
           <p><strong>Event:</strong> <code>{entry.event}</code> from Razorpay's webhook</p>
           <p>
             <strong>Raw Razorpay error:</strong> <code>{entry.raw_error_reason || "—"}</code> /{" "}

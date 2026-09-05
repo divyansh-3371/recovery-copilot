@@ -198,7 +198,36 @@ const ACTION_LABEL = {
 };
 
 function friendlyReasoning(text) {
-  return text.replace(/[Rr]ecoverability score \(?(\d+\.\d+)\)?/, (m, p1) => `Confidence (${Math.round(parseFloat(p1) * 100)}%)`);
+  let out = text.replace(/[Rr]ecoverability score \(?(\d+\.\d+)\)?/, (m, p1) => `Confidence (${Math.round(parseFloat(p1) * 100)}%)`);
+  out = out.replace(/'([a-z0-9_]+)'/g, (m, p1) => p1.replace(/_/g, ' '));
+  out = out.replace(/\b([a-z]+_[a-z_]+)\b/g, (m, p1) => p1.replace(/_/g, ' '));
+  return out;
+}
+
+// A one-line version for the primary view -- the full, precise reasoning
+// stays available behind "Show more" rather than being dumped in full by
+// default or hidden entirely.
+function shortReasonText(reasoning) {
+  if (!Array.isArray(reasoning) || reasoning.length === 0) return '';
+  const cleaned = friendlyReasoning(reasoning[0]);
+  const seps = ['. ', ' — ', ': '];
+  let cut = Infinity;
+  for (const sep of seps) { const i = cleaned.indexOf(sep); if (i !== -1 && i < cut) cut = i; }
+  if (cut === Infinity || cut > 80) {
+    return cleaned.length > 90 ? cleaned.slice(0, 87) + '…' : cleaned;
+  }
+  return cleaned.slice(0, cut) + '…';
+}
+
+function toggleReasoning() {
+  const short = document.getElementById('reason-short');
+  const full = document.getElementById('reason-full');
+  const btn = document.getElementById('reason-toggle');
+  if (!short || !full || !btn) return;
+  const expanded = !full.hidden;
+  full.hidden = expanded;
+  short.hidden = !expanded;
+  btn.textContent = expanded ? 'Show more' : 'Show less';
 }
 
 function showDecisionBox(cls, html) {
@@ -218,7 +247,18 @@ async function pollForDecision(paymentId, attempt = 1, maxAttempts = 12) {
   }
   if (data.found) {
     const actionLabel = ACTION_LABEL[data.action] || data.action;
-    const reasoningHtml = (data.reasoning || []).map(r => `<li>${friendlyReasoning(r)}</li>`).join('');
+    const fullReasoningHtml = (data.reasoning || []).map(r => `<li>${friendlyReasoning(r)}</li>`).join('');
+    const shortReasoningText = shortReasonText(data.reasoning);
+    // A short line by default; "Show more" swaps in the full, precise
+    // reasoning inline instead of dumping it by default -- toggled via
+    // plain hidden/shown elements since this page has no framework state.
+    const reasoningHtml = shortReasoningText ? (
+      `<p style="margin:6px 0;"><strong>Why:</strong> ` +
+      `<span id="reason-short">${shortReasoningText}</span>` +
+      `<ul id="reason-full" class="reasoning-full" hidden>${fullReasoningHtml}</ul> ` +
+      `<button type="button" id="reason-toggle" onclick="toggleReasoning()" ` +
+      `style="background:none;border:none;color:#2a78d6;cursor:pointer;font-size:0.9em;padding:0;">Show more</button></p>`
+    ) : '';
     const detail = data.execution_detail || {};
     let executionHtml = '';
 
@@ -247,7 +287,7 @@ async function pollForDecision(paymentId, attempt = 1, maxAttempts = 12) {
     }
     showDecisionBox('ready',
       `<h3>Recovery Copilot's decision: <strong>${actionLabel}</strong></h3>` +
-      (reasoningHtml ? `<ul>${reasoningHtml}</ul>` : '') + executionHtml
+      reasoningHtml + executionHtml
     );
     return;
   }

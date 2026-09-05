@@ -147,6 +147,16 @@ def isolated_live_audit(tmp_path):
     yield
 
 
+@pytest.fixture(autouse=True)
+def isolated_customer_history(tmp_path):
+    # Without this, the real SQLite file would persist across test runs --
+    # previous_attempts would silently keep climbing every time the suite
+    # runs, eventually crossing MAX_ATTEMPTS and changing which action a
+    # test's fixed inputs produce. Each test gets a fresh, empty db.
+    api.LIVE_CUSTOMER_HISTORY_DB_PATH = str(tmp_path / "live_customer_history.db")
+    yield
+
+
 @pytest.fixture
 def client():
     return TestClient(api.app)

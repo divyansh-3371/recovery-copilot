@@ -61,7 +61,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
 import dashboard_api
-from agent import email_sender, razorpay_live
+from agent import email_sender, live_customer_history, razorpay_live
 from agent.audit import AuditTrail
 from agent.messenger import generate_message
 from agent.classifier import RecoverabilityModel, train_default_model
@@ -77,6 +77,7 @@ MAX_BATCH_SIZE = 2000
 RATE_LIMIT_MAX_REQUESTS = 300
 RATE_LIMIT_WINDOW_SECONDS = 60.0
 LIVE_AUDIT_LOG_PATH = "data/live_audit_log.jsonl"
+LIVE_CUSTOMER_HISTORY_DB_PATH = "data/live_customer_history.db"
 
 _model: RecoverabilityModel | None = None
 _limiter = RateLimiter(max_requests=RATE_LIMIT_MAX_REQUESTS, window_seconds=RATE_LIMIT_WINDOW_SECONDS)
@@ -375,6 +376,18 @@ async def razorpay_webhook(request: Request) -> dict:
     raw_error_code = row_dict.pop("_raw_error_code", None)
     raw_error_description = row_dict.pop("_raw_error_description", None)
 
+    # map_webhook_payment_to_row() can't know this on its own -- a real
+    # customer's attempt count only exists across separate real
+    # transactions, which is exactly what live_customer_history.py tracks
+    # in place of the merchant CRM a real integration would have. Without
+    # this, previous_attempts stays 0 forever, and anything gated on it
+    # (agent/policy.py's voice_hinglish channel, for one) can never fire
+    # for a real transaction no matter what actually happened.
+    row_dict["previous_attempts"] = live_customer_history.record_failure_and_get_count(
+        payment_entity.get("contact"), payment_entity.get("email"),
+        db_path=LIVE_CUSTOMER_HISTORY_DB_PATH,
+    )
+
     row = pd.Series({**row_dict, "_true_recoverable_prob": 0.0})
     model = get_model()
     score = float(model.predict_proba(pd.DataFrame([row]))[0])
@@ -444,6 +457,7 @@ async def razorpay_webhook(request: Request) -> dict:
                 execution_detail = {
                     "type": "payment_link", "short_url": link.short_url, "link_id": link.link_id,
                     "emailed": email.ok, "email_error": None if email.ok else email.error,
+                    "sent_to": email_send_to if email.ok else None,
                 }
         else:
             execution_detail = {"type": "payment_link", "error": link.error}
