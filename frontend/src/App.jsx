@@ -35,7 +35,7 @@ export default function App() {
         <h1>{"\u{1F4B8}"} Recovery Copilot</h1>
         <div className="caption">Automatic payment recovery</div>
 
-        <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <nav className="nav-list">
           {TABS.map((t) => (
             <button
               key={t.key}
@@ -47,7 +47,7 @@ export default function App() {
           ))}
         </nav>
 
-        <div>
+        <div className="sidebar-dataset">
           <label className="field-label">Sample dataset</label>
           <input
             type="number" min={1} max={9999} value={seed}

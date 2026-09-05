@@ -80,6 +80,8 @@ h1, h2, h3, h4 { letter-spacing: -0.01em; margin: 0 0 8px; }
 .nav-item:hover { background: #f2f3f5; }
 .nav-item.active { background: #eaf1fc; color: var(--blue); font-weight: 600; }
 
+.nav-list { display: flex; flex-direction: column; gap: 2px; }
+
 .main {
   flex: 1;
   padding: 28px 36px 60px;
@@ -224,7 +226,31 @@ table.data-table tbody tr:hover { background: #f9fafc; cursor: pointer; }
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 
 @media (max-width: 900px) {
+  /* Below this width the sidebar can't stay a tall left column without
+     pushing the whole page down first -- it becomes a compact top header
+     instead: title+caption on one line, then the nav as its own full-width
+     horizontal scroll strip (a real tab bar, not everything mashed into
+     one row), then the dataset picker and About on a third line. */
   .app-shell { flex-direction: column; }
-  .sidebar { width: 100%; flex-direction: row; overflow-x: auto; }
+  .sidebar {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    overflow-x: visible;
+    gap: 10px 20px;
+  }
+  .sidebar h1 { margin-right: auto; }
+  .sidebar .caption { margin-top: 0; }
+  .nav-list {
+    flex-direction: row;
+    flex-basis: 100%;
+    overflow-x: auto;
+    gap: 4px;
+  }
+  .nav-item { white-space: nowrap; }
+  .sidebar-dataset { display: flex; align-items: center; gap: 8px; }
+  .sidebar-dataset .field-label { margin-bottom: 0; }
+  .sidebar-dataset input { width: 70px; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
 }
