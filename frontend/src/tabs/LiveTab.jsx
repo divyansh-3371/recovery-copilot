@@ -58,7 +58,10 @@ export default function LiveTab({ apiBase }) {
           <a href="https://razorpay.com/docs/payments/payments/test-card-details/" target="_blank" rel="noopener noreferrer">
             documented test failure card
           </a>{" "}
-          to see a real failure flow through the agent below, live.
+          to see a real failure flow through the agent below, live. You're stepping into that
+          customer's shoes for this — once it fails, the box that appears (including its
+          "Pay now" button) is written to them, not to you as the merchant; the same moment
+          shows up on this dashboard's own Live entries below, in your voice, once it's done.
         </p>
         <iframe
           src={`${apiBase}/checkout`}

@@ -56,9 +56,11 @@
   <div class="badge">TEST MODE</div>
   <h1>Recovery Copilot -- test checkout</h1>
   <p class="sub">
-    This is a real Razorpay Test Mode payment (no real money moves). Use a
+    This simulates one of <em>your customers</em> failing a payment -- pick their type below, then use a
     <a href="https://razorpay.com/docs/payments/payments/test-card-upi-details/" target="_blank" rel="noopener">documented test failure card</a>
-    to see the failure flow live into Recovery Copilot's agent, right here, seconds after it fails.
+    to trigger it (no real money moves). Once it fails, everything that appears below --
+    including the decision box and its "Pay now" button -- is written the way your customer would
+    see it in that moment, not as a report back to you.
   </p>
   <label for="amount">Amount (INR)</label>
   <input id="amount" type="number" value="500" min="1" step="1">
