@@ -27,6 +27,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 import razorpay
 from razorpay.errors import SignatureVerificationError
@@ -264,6 +265,31 @@ RAZORPAY_ERROR_REASON_MAP = {
 _KNOWN_METHODS = {"card", "upi", "netbanking", "wallet"}
 
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _local_hour_from_created_at(created_at) -> int:
+    """Derives a real customer_local_hour from the payment's actual
+    failure timestamp, instead of a hardcoded assumption -- this is what
+    lets the policy's quiet-hours deferral (agent/policy.py's QUIET_HOURS)
+    genuinely fire for real transactions rather than never triggering at
+    all. created_at is a Unix epoch (seconds, UTC), per Razorpay's Payment
+    entity. Assumes IST -- the honest limitation here is that Razorpay's
+    webhook payload carries no customer timezone at all, so this is a
+    best-effort proxy (India being this integration's primary market),
+    not a real per-customer timezone lookup. Falls back to noon (the
+    middle of business hours, never itself a quiet hour) if created_at is
+    missing or malformed, so a bad value degrades to "treat normally"
+    rather than accidentally forcing every unparseable payload into
+    quiet-hours deferral."""
+    if not created_at:
+        return 12
+    try:
+        return datetime.fromtimestamp(int(created_at), tz=IST).hour
+    except (TypeError, ValueError, OSError):
+        return 12
+
+
 def map_webhook_payment_to_row(payment_entity: dict) -> dict:
     """Maps a Razorpay `payment.entity` webhook payload (from a
     payment.failed event) into the row shape agent/classifier.py and
@@ -289,6 +315,8 @@ def map_webhook_payment_to_row(payment_entity: dict) -> dict:
     if customer_segment not in ("new", "returning", "vip"):
         customer_segment = "returning"
 
+    customer_local_hour = _local_hour_from_created_at(payment_entity.get("created_at"))
+
     return {
         "transaction_id": payment_entity.get("id", "unknown_payment"),
         "customer_id": payment_entity.get("contact") or "unknown",
@@ -301,7 +329,7 @@ def map_webhook_payment_to_row(payment_entity: dict) -> dict:
         "customer_segment": customer_segment,
         "previous_attempts": 0,
         "do_not_contact": False,
-        "customer_local_hour": 12,
+        "customer_local_hour": customer_local_hour,
         "days_since_event": 0,
         # raw values, kept only for observability (see RAZORPAY_ERROR_REASON_MAP's
         # note) -- not used by the classifier/policy, just logged so the map

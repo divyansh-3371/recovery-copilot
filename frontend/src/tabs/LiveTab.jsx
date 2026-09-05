@@ -92,13 +92,36 @@ export default function LiveTab({ apiBase }) {
 
 function ExecutionStatus({ executed, detail }) {
   if (!detail) return null;
+
+  // The instant "Pay now" action -- shown whenever a real link exists,
+  // regardless of whether an email also went out. This is the customer's
+  // own in-session action (they were just on the checkout page), not
+  // proactive outreach, so it's never gated by quiet hours.
+  const payNow = detail.short_url && (
+    <a
+      href={detail.short_url} target="_blank" rel="noopener noreferrer"
+      className="btn" style={{ display: "block", textAlign: "center", textDecoration: "none", marginTop: 8 }}
+    >
+      Pay now
+    </a>
+  );
+
+  if (detail.deferred_quiet_hours) {
+    return (
+      <div className="status-box thinking" style={{ marginTop: 10 }}>
+        {"😴"} It's quiet hours (10pm–8am) for this customer, so the proactive email was held back — but
+        the link above (if present) works immediately since they were already on the checkout page.
+        {payNow}
+      </div>
+    );
+  }
   if (executed && detail.type === "payment_link") {
     return (
       <div className="status-box ready" style={{ marginTop: 10 }}>
-        {"✅"} A real Razorpay Payment Link was created:{" "}
-        <a href={detail.short_url} target="_blank" rel="noopener noreferrer">{detail.short_url}</a>
-        <div style={{ marginTop: 4, fontSize: "0.82rem" }}>
-          {detail.emailed ? "✅ Emailed to the customer, so it doesn't depend on them seeing this page."
+        {"✅"} A real Razorpay Payment Link was created.
+        {payNow}
+        <div style={{ marginTop: 6, fontSize: "0.82rem" }}>
+          {detail.emailed ? "✅ Also emailed to the customer, so it doesn't depend on them seeing this page."
             : `⚠️ Not emailed${detail.email_error ? `: ${detail.email_error}` : " -- no email delivery configured."}`}
         </div>
       </div>
@@ -108,6 +131,7 @@ function ExecutionStatus({ executed, detail }) {
     return (
       <div className="status-box ready" style={{ marginTop: 10 }}>
         {"✅"} A real email was sent to <strong>{detail.sent_to}</strong>
+        {payNow}
       </div>
     );
   }

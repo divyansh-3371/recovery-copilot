@@ -318,3 +318,100 @@ def test_recovery_status_paid(client, monkeypatch):
     assert data["has_link"] is True
     assert data["recovered"] is True
     assert data["recovered_amount"] == 1234.0
+
+
+# --- customer_local_hour derived from the real payment timestamp -----------
+
+QUIET_HOUR_CREATED_AT = 1788557400   # 2026-09-05 03:00 IST
+NORMAL_HOUR_CREATED_AT = 1788597000  # 2026-09-05 14:00 IST
+
+
+def test_local_hour_from_created_at_quiet():
+    assert razorpay_live._local_hour_from_created_at(QUIET_HOUR_CREATED_AT) == 3
+
+
+def test_local_hour_from_created_at_normal():
+    assert razorpay_live._local_hour_from_created_at(NORMAL_HOUR_CREATED_AT) == 14
+
+
+def test_local_hour_from_created_at_missing_defaults_to_noon():
+    assert razorpay_live._local_hour_from_created_at(None) == 12
+    assert razorpay_live._local_hour_from_created_at(0) == 12  # falsy, treated as missing
+
+
+def test_local_hour_from_created_at_malformed_defaults_to_noon():
+    assert razorpay_live._local_hour_from_created_at("not-a-timestamp") == 12
+
+
+def test_map_webhook_payment_to_row_uses_real_created_at():
+    row = razorpay_live.map_webhook_payment_to_row({
+        "id": "pay_x", "amount": 1000, "created_at": QUIET_HOUR_CREATED_AT,
+    })
+    assert row["customer_local_hour"] == 3
+
+
+# --- quiet-hours deferral in the real webhook path --------------------------
+
+def test_webhook_defers_email_during_quiet_hours_but_still_creates_link(client, monkeypatch):
+    """A payment failing at 3am IST should not get an unprompted email --
+    but the payment link (for the checkout page's own instant 'pay now'
+    action, not proactive outreach) must still be created."""
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", "whsec_test")
+    email_calls = []
+    monkeypatch.setattr(
+        api.email_sender, "send_email",
+        lambda **kw: (email_calls.append(kw), email_sender.EmailResult(ok=True))[1],
+    )
+    link_calls = []
+    monkeypatch.setattr(
+        api.razorpay_live, "create_payment_link",
+        lambda **kw: (link_calls.append(kw), razorpay_live.PaymentLinkResult(ok=True, link_id="plink_q", short_url="https://rzp.io/i/q"))[1],
+    )
+    payload = {
+        "event": "payment.failed",
+        "payload": {"payment": {"entity": {
+            "id": "pay_QUIET001", "amount": 500000, "currency": "INR", "method": "netbanking",
+            "email": "customer@example.com", "error_reason": "gateway_timeout",
+            "created_at": QUIET_HOUR_CREATED_AT,
+        }}},
+    }
+    body = json.dumps(payload).encode()
+    sig = _sign("whsec_test", body.decode())
+    resp = client.post("/webhooks/razorpay", content=body, headers={"X-Razorpay-Signature": sig})
+    assert resp.status_code == 200
+    result = resp.json()
+
+    # The link must always be created regardless of action, so "pay now" works.
+    assert len(link_calls) == 1
+    assert result["execution_detail"]["short_url"] == "https://rzp.io/i/q"
+    assert result["execution_detail"]["deferred_quiet_hours"] is True
+    assert result["execution_detail"]["emailed"] is False
+    # The proactive email must NOT have been sent.
+    assert len(email_calls) == 0
+
+
+def test_webhook_sends_email_immediately_outside_quiet_hours(client, monkeypatch):
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", "whsec_test")
+    email_calls = []
+    monkeypatch.setattr(
+        api.email_sender, "send_email",
+        lambda **kw: (email_calls.append(kw), email_sender.EmailResult(ok=True))[1],
+    )
+    monkeypatch.setattr(
+        api.razorpay_live, "create_payment_link",
+        lambda **kw: razorpay_live.PaymentLinkResult(ok=True, link_id="plink_n", short_url="https://rzp.io/i/n"),
+    )
+    payload = {
+        "event": "payment.failed",
+        "payload": {"payment": {"entity": {
+            "id": "pay_NORMAL001", "amount": 500000, "currency": "INR", "method": "netbanking",
+            "email": "customer@example.com", "error_reason": "gateway_timeout",
+            "created_at": NORMAL_HOUR_CREATED_AT,
+        }}},
+    }
+    body = json.dumps(payload).encode()
+    sig = _sign("whsec_test", body.decode())
+    resp = client.post("/webhooks/razorpay", content=body, headers={"X-Razorpay-Signature": sig})
+    result = resp.json()
+    assert result["execution_detail"].get("deferred_quiet_hours") is not True
+    assert len(email_calls) == 1

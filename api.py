@@ -66,7 +66,7 @@ from agent.audit import AuditTrail
 from agent.messenger import generate_message
 from agent.classifier import RecoverabilityModel, train_default_model
 from agent.pipeline import run_pipeline
-from agent.policy import decide as policy_decide
+from agent.policy import QUIET_HOURS, decide as policy_decide
 from agent.rate_limiter import RateLimiter
 from agent.razorpay_client import build_call
 from data.generate_data import FAILURE_REASONS, PAYMENT_METHODS, RISK_TYPES, CUSTOMER_SEGMENTS, generate
@@ -402,6 +402,18 @@ async def razorpay_webhook(request: Request) -> dict:
     # (used for whatever real record Razorpay keeps) is untouched.
     email_recipient_override = os.environ.get("EMAIL_RECIPIENT_OVERRIDE")
     email_send_to = email_recipient_override or customer_email
+    # Quiet hours (agent/policy.py's QUIET_HOURS, 22:00-08:00) gate any
+    # *proactive* customer contact -- an email/SMS we send unprompted.
+    # They do NOT gate the payment link itself: a customer who is right
+    # now, in this session, on the checkout page failing a payment is not
+    # someone we're "reaching out" to at an odd hour -- they're already
+    # here, and giving them an instant way to pay is responding to their
+    # own action, not proactive outreach. So the link is always created
+    # (the checkout page can offer a "Pay now" button regardless of hour),
+    # but the email that would otherwise land in their inbox unprompted is
+    # deferred instead of sent, honestly reported as such rather than
+    # either ignoring the rule or silently pretending nothing happened.
+    is_quiet_hours = row_dict.get("customer_local_hour") in QUIET_HOURS
 
     if decision.action == "RETRY_PAYMENT":
         link = razorpay_live.create_payment_link(
@@ -412,23 +424,27 @@ async def razorpay_webhook(request: Request) -> dict:
             customer_contact=customer_contact,
         )
         if link.ok:
-            # Creating the link isn't enough -- a customer who just closed
-            # (or never saw, or never returns to) our checkout page would
-            # otherwise never learn it exists. Email it, the same channel
-            # SEND_MESSAGE already relies on, so recovery doesn't depend on
-            # someone noticing a webpage element behind Razorpay's own
-            # "Retry payment" modal.
-            email = email_sender.send_email(
-                to_address=email_send_to,
-                subject="Your payment didn't go through -- here's a link to finish it",
-                body=f"We tried to process your payment again and couldn't reach your bank in time. "
-                     f"You can complete it here: {link.short_url}",
-            )
             executed = True  # the link itself is real regardless of whether the email also sent
-            execution_detail = {
-                "type": "payment_link", "short_url": link.short_url, "link_id": link.link_id,
-                "emailed": email.ok, "email_error": None if email.ok else email.error,
-            }
+            if is_quiet_hours:
+                execution_detail = {
+                    "type": "payment_link", "short_url": link.short_url, "link_id": link.link_id,
+                    "emailed": False, "deferred_quiet_hours": True,
+                }
+            else:
+                # Creating the link isn't enough -- a customer who just closed
+                # (or never returns to) our checkout page would otherwise
+                # never learn it exists. Email it too, so recovery doesn't
+                # depend on someone noticing a webpage element.
+                email = email_sender.send_email(
+                    to_address=email_send_to,
+                    subject="Your payment didn't go through -- here's a link to finish it",
+                    body=f"We tried to process your payment again and couldn't reach your bank in time. "
+                         f"You can complete it here: {link.short_url}",
+                )
+                execution_detail = {
+                    "type": "payment_link", "short_url": link.short_url, "link_id": link.link_id,
+                    "emailed": email.ok, "email_error": None if email.ok else email.error,
+                }
         else:
             execution_detail = {"type": "payment_link", "error": link.error}
 
@@ -438,7 +454,9 @@ async def razorpay_webhook(request: Request) -> dict:
         # a nudge that doesn't actually let the customer pay isn't much of
         # a nudge, and it's what makes SEND_MESSAGE's outcome (recovered or
         # not) trackable the same way RETRY_PAYMENT's is, via the link's
-        # own status rather than a second, separate mechanism.
+        # own status rather than a second, separate mechanism. Created
+        # regardless of quiet hours, same reasoning as RETRY_PAYMENT above
+        # -- only the proactive send itself is deferred.
         link = razorpay_live.create_payment_link(
             amount_rupees=row_dict["amount"],
             description=f"Complete your payment -- {row_dict['transaction_id']}",
@@ -446,24 +464,28 @@ async def razorpay_webhook(request: Request) -> dict:
             customer_email=customer_email,
             customer_contact=customer_contact,
         )
-        email_body = message_text
-        link_id = None
-        if link.ok:
-            email_body = f"{message_text}\n\nComplete your payment here: {link.short_url}"
-            link_id = link.link_id
-        email = email_sender.send_email(
-            to_address=email_send_to,
-            subject="Let's get your payment sorted",
-            body=email_body,
-        )
-        if email.ok:
-            executed = True
-            execution_detail = {"type": "email", "sent_to": email_send_to}
-            if link_id:
-                execution_detail["link_id"] = link_id
-                execution_detail["short_url"] = link.short_url
+        link_id = link.link_id if link.ok else None
+        short_url = link.short_url if link.ok else None
+
+        if is_quiet_hours:
+            executed = bool(link.ok)
+            execution_detail = {
+                "type": "email", "emailed": False, "deferred_quiet_hours": True,
+                **({"link_id": link_id, "short_url": short_url} if link_id else {}),
+            }
         else:
-            execution_detail = {"type": "email", "error": email.error}
+            email_body = message_text
+            if link.ok:
+                email_body = f"{message_text}\n\nComplete your payment here: {link.short_url}"
+            email = email_sender.send_email(to_address=email_send_to, subject="Let's get your payment sorted", body=email_body)
+            if email.ok:
+                executed = True
+                execution_detail = {"type": "email", "sent_to": email_send_to}
+                if link_id:
+                    execution_detail["link_id"] = link_id
+                    execution_detail["short_url"] = short_url
+            else:
+                execution_detail = {"type": "email", "error": email.error}
 
     _live_audit.log(
         transaction_id=row_dict["transaction_id"],
