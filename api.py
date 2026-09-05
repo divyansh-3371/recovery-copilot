@@ -376,6 +376,11 @@ async def razorpay_webhook(request: Request) -> dict:
     raw_error_reason = row_dict.pop("_raw_error_reason", None)
     raw_error_code = row_dict.pop("_raw_error_code", None)
     raw_error_description = row_dict.pop("_raw_error_description", None)
+    # Set when this payment was made against a recovery link created for an
+    # earlier failed transaction (see razorpay_live.create_payment_link's
+    # docstring) -- i.e. the same purchase attempted again, not a second,
+    # independent one. None for a payment from the original checkout order.
+    retry_of_transaction_id = row_dict.pop("_retry_of_transaction_id", None)
 
     # map_webhook_payment_to_row() can't know this on its own -- a real
     # customer's attempt count only exists across separate real
@@ -433,6 +438,18 @@ async def razorpay_webhook(request: Request) -> dict:
     # deferred instead of sent, honestly reported as such rather than
     # either ignoring the rule or silently pretending nothing happened.
     is_quiet_hours = row_dict.get("customer_local_hour") in QUIET_HOURS
+    # Tags any recovery link this webhook creates with the *root* purchase
+    # it's recovering -- if this transaction is itself already a retry of
+    # an earlier one, that earlier one's ID, so a whole chain of repeated
+    # failed attempts collapses to one root rather than forming a chain
+    # the dashboard would have to walk. That's what lets "the customer
+    # failed, then failed again retrying" be recognized as one ₹-at-risk
+    # purchase, not two independent ones.
+    root_transaction_id = retry_of_transaction_id or row_dict["transaction_id"]
+    recovery_link_notes = {
+        "original_transaction_id": root_transaction_id,
+        "customer_segment": row_dict["customer_segment"],
+    }
 
     if decision.action == "RETRY_PAYMENT":
         link = razorpay_live.create_payment_link(
@@ -441,6 +458,7 @@ async def razorpay_webhook(request: Request) -> dict:
             customer_name=row_dict["customer_name"],
             customer_email=customer_email,
             customer_contact=customer_contact,
+            notes=recovery_link_notes,
         )
         if link.ok:
             executed = True  # the link itself is real regardless of whether the email also sent
@@ -483,6 +501,7 @@ async def razorpay_webhook(request: Request) -> dict:
             customer_name=row_dict["customer_name"],
             customer_email=customer_email,
             customer_contact=customer_contact,
+            notes=recovery_link_notes,
         )
         link_id = link.link_id if link.ok else None
         short_url = link.short_url if link.ok else None
@@ -526,12 +545,14 @@ async def razorpay_webhook(request: Request) -> dict:
             "execution_detail": execution_detail,
             "message": message_text,
             "intervention_cost": intervention_cost,
+            "retry_of_transaction_id": retry_of_transaction_id,
         },
     )
 
     return {
         "status": "processed", "action": decision.action, "recoverability_score": score,
         "executed": executed, "execution_detail": execution_detail, "intervention_cost": intervention_cost,
+        "retry_of_transaction_id": retry_of_transaction_id,
     }
 
 

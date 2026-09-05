@@ -133,6 +133,11 @@ export default function TransactionsTab({ seed }) {
             <p><strong>What we did:</strong> <span style={{ color: actionColor(detail.action), fontWeight: 700 }}>{ACTION_LABEL[detail.action] || detail.action}</span></p>
             {detail.recoverability_score != null && <p><strong>Confidence:</strong> {Math.round(detail.recoverability_score * 100)}%</p>}
             {detail.intervention_cost != null && <p><strong>Cost to recover:</strong> {formatMoney(detail.intervention_cost)}</p>}
+            {detail.retry_of_transaction_id && (
+              <p style={{ color: "var(--ink-muted)" }}>
+                {"↻"} Same purchase as <code>{detail.retry_of_transaction_id}</code>, attempted again
+              </p>
+            )}
             {Array.isArray(detail.reasoning) && detail.reasoning.length > 0 && (
               <p>
                 <strong>Why: </strong>
@@ -282,6 +287,7 @@ function normalizeLiveRow(entry) {
     agent_action: entry.action,
     agent_resolved: false, // real recovery status lives on the Live tab's own polling; kept simple here
     intervention_cost: entry.intervention_cost,
+    retry_of_transaction_id: entry.retry_of_transaction_id,
     _source: "live",
     _liveEntry: entry,
   };

@@ -125,12 +125,20 @@ class PaymentLinkResult:
 
 def create_payment_link(amount_rupees: float, description: str, customer_name: str | None = None,
                          customer_email: str | None = None, customer_contact: str | None = None,
-                         currency: str = "INR") -> PaymentLinkResult:
+                         currency: str = "INR", notes: dict | None = None) -> PaymentLinkResult:
     """Creates a real, payable Razorpay Payment Link -- this is what makes
     a RETRY_PAYMENT decision an actual action rather than a label: the
     resulting short_url is a genuine URL a customer could open and pay
     through, not a description of what would happen. Retries transient
-    connection failures the same way create_order() does."""
+    connection failures the same way create_order() does.
+
+    `notes` is stored on the Payment Link and, same as an Order's notes
+    (see map_webhook_payment_to_row's customer_segment comment), Razorpay
+    copies it onto whatever Payment entity eventually gets created against
+    this link -- which is how api.py tags a recovery link with the
+    original transaction it's recovering, so that transaction's *next*
+    payment.failed webhook (if the customer fails again) can be recognized
+    as the same purchase attempted again, not a brand new one."""
     client = _get_client()
     if client is None:
         return PaymentLinkResult(ok=False, error="Razorpay is not configured on this server "
@@ -154,6 +162,7 @@ def create_payment_link(amount_rupees: float, description: str, customer_name: s
                 "customer": customer,
                 "notify": {"sms": False, "email": False},  # we handle notification ourselves
                 "reminder_enable": False,
+                "notes": notes or {},
             })
             return PaymentLinkResult(ok=True, link_id=link["id"], short_url=link["short_url"])
         except Exception as exc:
@@ -317,6 +326,13 @@ def map_webhook_payment_to_row(payment_entity: dict) -> dict:
 
     customer_local_hour = _local_hour_from_created_at(payment_entity.get("created_at"))
 
+    # If this payment was made against a recovery link api.py created for an
+    # earlier failed transaction, that link's notes (see create_payment_link's
+    # docstring) carry the original transaction's ID -- meaning this is the
+    # same purchase attempted again, not a second, independent one. None for
+    # a payment that came from the original checkout order directly.
+    retry_of_transaction_id = notes.get("original_transaction_id")
+
     return {
         "transaction_id": payment_entity.get("id", "unknown_payment"),
         "customer_id": payment_entity.get("contact") or "unknown",
@@ -337,6 +353,7 @@ def map_webhook_payment_to_row(payment_entity: dict) -> dict:
         "_raw_error_reason": payment_entity.get("error_reason"),
         "_raw_error_code": payment_entity.get("error_code"),
         "_raw_error_description": payment_entity.get("error_description"),
+        "_retry_of_transaction_id": retry_of_transaction_id,
     }
 
 

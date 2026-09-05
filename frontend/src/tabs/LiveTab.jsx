@@ -40,6 +40,17 @@ export default function LiveTab({ apiBase }) {
   const totalRecovered = Object.values(recovered).reduce((sum, a) => sum + (a || 0), 0);
   const totalSpent = (rows || []).reduce((sum, r) => sum + (r.intervention_cost || 0), 0);
 
+  // Retrying a failed payment creates a brand new Razorpay payment_id --
+  // without this, "the customer failed, then failed again retrying" reads
+  // as two separate ₹-at-risk purchases instead of one purchase attempted
+  // twice. api.py tags every recovery link with the root transaction it's
+  // recovering (retry_of_transaction_id), so grouping by that (falling
+  // back to the transaction's own ID for a first attempt) collapses a
+  // whole retry chain back to the one purchase it actually is.
+  const purchaseGroups = groupByPurchase(rows || []);
+  const distinctPurchases = purchaseGroups.size;
+  const totalAmountInvolved = [...purchaseGroups.values()].reduce((sum, g) => sum + (g.amount || 0), 0);
+
   return (
     <div>
       <h2>Real payments, real time</h2>
@@ -86,10 +97,20 @@ export default function LiveTab({ apiBase }) {
             <div className="kpi">
               <div className="label">Real transactions handled</div>
               <div className="value">{rows.length}</div>
+              {distinctPurchases !== rows.length && (
+                <div className="delta" style={{ color: "var(--ink-muted)" }}>
+                  {distinctPurchases} distinct purchase{distinctPurchases === 1 ? "" : "s"}
+                </div>
+              )}
             </div>
             <div className="kpi">
               <div className="label">Total amount involved</div>
-              <div className="value">{formatMoney(rows.reduce((sum, r) => sum + (r.amount || 0), 0))}</div>
+              <div className="value">{formatMoney(totalAmountInvolved)}</div>
+              {distinctPurchases !== rows.length && (
+                <div className="delta" style={{ color: "var(--ink-muted)" }}>
+                  not double-counting retries of the same purchase
+                </div>
+              )}
             </div>
             <div className="kpi">
               <div className="label">Most common response</div>
@@ -173,6 +194,30 @@ function ExecutionStatus({ executed, detail }) {
   );
 }
 
+// Groups real transactions by the purchase they belong to, not just by
+// their own Razorpay payment_id -- a retry link's payment gets a brand
+// new ID, but api.py tags it with the ID of the transaction it's
+// recovering (retry_of_transaction_id), so grouping by that (falling back
+// to the transaction's own ID when absent, i.e. a first attempt) collapses
+// a whole "failed, retried, failed again" chain back to one purchase.
+function groupByPurchase(rows) {
+  const groups = new Map();
+  for (const r of rows) {
+    const key = r.retry_of_transaction_id || r.transaction_id;
+    if (!groups.has(key)) groups.set(key, { amount: null, entries: [] });
+    const g = groups.get(key);
+    g.entries.push(r);
+    if (r.transaction_id === key) g.amount = r.amount; // the root attempt's own amount
+  }
+  // A retry's root attempt should always also be in `rows` (it's what
+  // created the recovery link in the first place) -- this fallback only
+  // guards against that assumption ever not holding, e.g. a partial log.
+  for (const g of groups.values()) {
+    if (g.amount == null && g.entries.length > 0) g.amount = g.entries[0].amount;
+  }
+  return groups;
+}
+
 function mostCommon(arr) {
   const counts = {};
   let best = null, bestCount = 0;
@@ -218,6 +263,11 @@ function LiveEntry({ entry, onRecovered }) {
         <div>
           <strong>{formatMoney(entry.amount)}</strong> · {humanize(entry.failure_reason)} · {humanize(entry.customer_segment || "unknown")} customer
           {" "}→ <span style={{ color: actionColor(entry.action), fontWeight: 700 }}>{ACTION_LABEL[entry.action] || entry.action}</span>
+          {entry.retry_of_transaction_id && (
+            <div style={{ color: "var(--ink-muted)", fontSize: "0.78rem", marginTop: 2 }}>
+              {"↻"} Same purchase as <code>{entry.retry_of_transaction_id}</code>, attempted again — not counted twice above
+            </div>
+          )}
           {(entry.recoverability_score != null || entry.intervention_cost != null) && (
             <div style={{ color: "var(--ink-muted)", fontSize: "0.82rem" }}>
               {entry.recoverability_score != null && <>Confidence: {Math.round(entry.recoverability_score * 100)}%</>}

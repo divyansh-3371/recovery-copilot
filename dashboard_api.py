@@ -287,6 +287,6 @@ def live_transactions() -> dict:
         "transaction_id", "timestamp", "action", "reasoning", "failure_reason", "amount",
         "customer_segment", "recoverability_score", "event", "raw_error_reason",
         "raw_error_code", "raw_error_description", "executed", "execution_detail",
-        "intervention_cost",
+        "intervention_cost", "retry_of_transaction_id",
     ] if c in df.columns]
     return _clean({"transactions": df[cols].to_dict(orient="records")})

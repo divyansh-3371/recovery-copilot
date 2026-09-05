@@ -149,6 +149,28 @@ def test_map_webhook_payment_to_row_missing_fields_does_not_raise():
     assert row["failure_reason"] == "issuer_declined"
 
 
+def test_map_webhook_payment_to_row_extracts_retry_of_transaction_id():
+    """A payment made against a recovery link api.py created carries that
+    link's notes -- including the original transaction it's recovering,
+    which is what lets a retry chain collapse back to one purchase instead
+    of reading as a second, independent one."""
+    payment_entity = {
+        "id": "pay_RETRY_ATTEMPT",
+        "amount": 50000,
+        "notes": {"original_transaction_id": "pay_ROOT123", "customer_segment": "returning"},
+    }
+    row = razorpay_live.map_webhook_payment_to_row(payment_entity)
+    assert row["_retry_of_transaction_id"] == "pay_ROOT123"
+
+
+def test_map_webhook_payment_to_row_no_retry_of_for_a_first_attempt():
+    """A payment from the original checkout order (no recovery link
+    involved yet) has no such note -- this is a first attempt, not a retry."""
+    payment_entity = {"id": "pay_FIRST_ATTEMPT", "amount": 50000, "notes": {"customer_segment": "new"}}
+    row = razorpay_live.map_webhook_payment_to_row(payment_entity)
+    assert row["_retry_of_transaction_id"] is None
+
+
 def test_parse_webhook_event_roundtrip():
     payload = razorpay_live.parse_webhook_event('{"event": "payment.failed", "x": 1}')
     assert payload["event"] == "payment.failed"

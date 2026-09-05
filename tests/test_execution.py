@@ -59,6 +59,50 @@ def test_create_payment_link_success(monkeypatch):
     assert result.link_id == "plink_FAKE123"
 
 
+def test_create_payment_link_passes_notes_through(monkeypatch):
+    """notes is what lets api.py tag a recovery link with the original
+    transaction it's recovering -- Razorpay copies it onto whatever
+    Payment eventually gets made against the link, the same way it already
+    does for an Order's notes (customer_segment)."""
+    monkeypatch.setenv("RAZORPAY_KEY_ID", "rzp_test_fake")
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", "fake_secret")
+
+    captured = {}
+
+    class FakePaymentLinkResource:
+        def create(self, data):
+            captured.update(data)
+            return {"id": "plink_FAKE123", "short_url": "https://rzp.io/i/fake123"}
+
+    class FakeClient:
+        payment_link = FakePaymentLinkResource()
+
+    monkeypatch.setattr(razorpay_live, "_get_client", lambda: FakeClient())
+    razorpay_live.create_payment_link(
+        amount_rupees=500, description="test", notes={"original_transaction_id": "pay_ROOT123"},
+    )
+    assert captured["notes"] == {"original_transaction_id": "pay_ROOT123"}
+
+
+def test_create_payment_link_defaults_notes_to_empty_dict(monkeypatch):
+    monkeypatch.setenv("RAZORPAY_KEY_ID", "rzp_test_fake")
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", "fake_secret")
+
+    captured = {}
+
+    class FakePaymentLinkResource:
+        def create(self, data):
+            captured.update(data)
+            return {"id": "plink_FAKE123", "short_url": "https://rzp.io/i/fake123"}
+
+    class FakeClient:
+        payment_link = FakePaymentLinkResource()
+
+    monkeypatch.setattr(razorpay_live, "_get_client", lambda: FakeClient())
+    razorpay_live.create_payment_link(amount_rupees=500, description="test")
+    assert captured["notes"] == {}
+
+
 def test_create_payment_link_api_error(monkeypatch):
     monkeypatch.setenv("RAZORPAY_KEY_ID", "rzp_test_fake")
     monkeypatch.setenv("RAZORPAY_KEY_SECRET", "fake_secret")
@@ -245,6 +289,65 @@ def test_webhook_attempts_payment_link_for_retry(client, monkeypatch):
         assert len(calls) == 1
         assert result["executed"] is True
         assert result["execution_detail"]["short_url"] == "https://rzp.io/i/x"
+
+
+def test_webhook_tags_a_first_attempts_recovery_link_with_its_own_id(client, monkeypatch):
+    """A first-attempt failure has nothing to be "a retry of" yet -- any
+    recovery link it creates should be tagged with its own transaction ID
+    as the root, and the response itself should report no retry_of_transaction_id."""
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", "whsec_test")
+    calls = []
+    monkeypatch.setattr(
+        api.razorpay_live, "create_payment_link",
+        lambda **kwargs: (calls.append(kwargs), razorpay_live.PaymentLinkResult(ok=True, link_id="plink_x", short_url="https://rzp.io/i/x"))[1],
+    )
+    payload = {
+        "event": "payment.failed",
+        "payload": {"payment": {"entity": {
+            "id": "pay_ROOT_FIRST", "amount": 500000, "currency": "INR", "method": "netbanking",
+            "email": "customer@example.com", "error_reason": "gateway_timeout",
+        }}},
+    }
+    body = json.dumps(payload).encode()
+    sig = _sign("whsec_test", body.decode())
+    resp = client.post("/webhooks/razorpay", content=body, headers={"X-Razorpay-Signature": sig})
+    result = resp.json()
+    assert result["retry_of_transaction_id"] is None
+    if calls:  # a recovery link was actually created (RETRY_PAYMENT or SEND_MESSAGE)
+        assert calls[0]["notes"]["original_transaction_id"] == "pay_ROOT_FIRST"
+
+
+def test_webhook_propagates_root_transaction_id_through_a_retry_chain(client, monkeypatch):
+    """If the customer's own retry (via a recovery link we created earlier)
+    fails again, the *new* payment carries the original link's notes --
+    including the root transaction. Any further recovery link this second
+    failure creates must stay tagged with that same root, not restart the
+    chain at this payment's own ID, or a purchase attempted 3+ times would
+    fragment into multiple "purchases" again."""
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", "whsec_test")
+    calls = []
+    monkeypatch.setattr(
+        api.razorpay_live, "create_payment_link",
+        lambda **kwargs: (calls.append(kwargs), razorpay_live.PaymentLinkResult(ok=True, link_id="plink_y", short_url="https://rzp.io/i/y"))[1],
+    )
+    payload = {
+        "event": "payment.failed",
+        "payload": {"payment": {"entity": {
+            "id": "pay_SECOND_ATTEMPT", "amount": 500000, "currency": "INR", "method": "netbanking",
+            "email": "customer@example.com", "error_reason": "gateway_timeout",
+            "notes": {"original_transaction_id": "pay_ROOT999", "customer_segment": "returning"},
+        }}},
+    }
+    body = json.dumps(payload).encode()
+    sig = _sign("whsec_test", body.decode())
+    resp = client.post("/webhooks/razorpay", content=body, headers={"X-Razorpay-Signature": sig})
+    result = resp.json()
+    assert result["retry_of_transaction_id"] == "pay_ROOT999"
+    if calls:
+        assert calls[0]["notes"]["original_transaction_id"] == "pay_ROOT999"
+
+    logged = api._live_audit.for_transaction("pay_SECOND_ATTEMPT")
+    assert logged.iloc[0]["retry_of_transaction_id"] == "pay_ROOT999"
 
 
 def test_checkout_decision_surfaces_execution_detail(client, monkeypatch):
