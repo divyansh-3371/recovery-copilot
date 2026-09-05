@@ -1,7 +1,7 @@
 """
 CLI entry point — runs the full Recovery Copilot pipeline on a fresh
 synthetic batch and prints the measured recovery summary. Useful for a quick
-sanity check and as a demo fallback if the Streamlit UI has any hiccup live.
+sanity check and as a demo fallback if the dashboard has any hiccup live.
 
 Usage:
     python run_batch.py

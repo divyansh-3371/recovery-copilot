@@ -84,11 +84,12 @@ agent/simulator.py
    that Recovery Copilot avoided.
    │
    ▼
-app.py (Streamlit + Plotly dashboard)
-   KPI row (stat tiles) → dumbbell chart (recovered: baseline vs agent,
+dashboard_api.py (FastAPI router) → frontend/ (React + recharts dashboard)
+   KPI row (stat tiles) → bar chart (recovered: baseline vs agent,
    per risk type) → action-breakdown bar → filterable transaction table →
    single-transaction drill-down (score explanation, decision reasoning,
-   generated message, on-demand voice playback, full audit trail).
+   generated message, full audit trail) → Live tab (real Razorpay checkout,
+   real-time webhook-driven decisions, real execution).
 ```
 
 ## Two directions added after re-checking against the track spec

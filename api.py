@@ -1,7 +1,8 @@
 """
 Thin FastAPI service exposing the same agent pipeline used by the CLI and
-the Streamlit dashboard, so Recovery Copilot can be called as a service
-from a real backend instead of only ever run as a demo.
+the React dashboard (frontend/, via dashboard_api.py's router), so
+Recovery Copilot can be called as a service from a real backend instead
+of only ever run as a demo.
 
 Security posture (deliberately explicit, not assumed):
   - Rate limiting (agent/rate_limiter.py) on every route -- caps request

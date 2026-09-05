@@ -64,7 +64,7 @@ data/generate_data.py  →  synthetic batch of at-risk revenue events
            baseline policy on the same batch → measured ₹ delta
                               │
                               ▼
-                    app.py (Streamlit dashboard)
+        dashboard_api.py (FastAPI router)  →  frontend/ (React dashboard)
 ```
 
 See `pitch/architecture.md` for the fuller write-up.
@@ -139,7 +139,7 @@ for itself as production-minded:
   tests; CI runs them on every push.
 - **`api.py`** — the same pipeline exposed as a FastAPI service
   (`/decide`, `/batch/demo`), so it's callable from a real backend, not only
-  runnable as a CLI or a Streamlit demo. Hardened, not just functional:
+  runnable as a CLI or through the dashboard. Hardened, not just functional:
   rate limiting, SQL-injection-defended state persistence, strict input
   validation, bounded batch size, opt-in API-key auth, and no internal
   detail leaked on error — every control verified against a live server,
@@ -197,12 +197,14 @@ doesn't prove.
 
 ## Tech stack
 
-Pure Python: `pandas` / `numpy` for data, `scikit-learn` for the recoverability
-model, `Streamlit` + `Plotly` for the dashboard, `anthropic` (optional, with a
-graceful template fallback) for message generation, `pyttsx3` for fully
-offline text-to-speech on the Hinglish voice channel, `sqlite3` (stdlib) for
-workflow state, `pytest` for tests, `fastapi`/`uvicorn` for the service layer,
-`razorpay` (official SDK) for real order creation and signature verification.
+Python backend: `pandas` / `numpy` for data, `scikit-learn` for the
+recoverability model, `anthropic` (optional, with a graceful template
+fallback) for message generation, `pyttsx3` for fully offline
+text-to-speech on the Hinglish voice channel, `sqlite3` (stdlib) for
+workflow state, `pytest` for tests, `fastapi`/`uvicorn` for the API +
+dashboard-data service, `razorpay` (official SDK) for real order
+creation and signature verification. React frontend: Vite + React,
+`recharts` for charts, plain CSS.
 
 ## Running it
 
@@ -218,14 +220,15 @@ python simulate_workflow.py --days 5
 # Test suite
 pytest -q
 
-# Dashboard
-streamlit run app.py
+# API + dashboard-data service
+uvicorn api:app --port 8010 --reload
 
-# API service
-uvicorn api:app --reload
+# React dashboard (separate terminal)
+cd frontend && npm install && npm run dev
+# open http://localhost:5173
 
 # Real Razorpay checkout, once configured (see pitch/razorpay_live_setup.md)
-# open http://localhost:8000/checkout
+# open http://localhost:8010/checkout
 ```
 
 Optional: set `ANTHROPIC_API_KEY` in your environment for LLM-generated
@@ -280,7 +283,8 @@ agent/cost_model.py       estimated cost per intervention action
 agent/policy.py           decision engine + stopping rules
 agent/messenger.py        message generation (LLM + template, tone escalates with attempt #) + offline TTS
 agent/razorpay_client.py  action -> Razorpay API call stub mapping (illustrative, no network)
-agent/razorpay_live.py    real Razorpay SDK wrapper: orders, signature verification, webhook mapping
+agent/razorpay_live.py    real Razorpay SDK wrapper: orders, payment links, signature verification
+agent/email_sender.py     real email delivery (Resend HTTP API) for SEND_MESSAGE/RETRY_PAYMENT
 agent/audit.py            append-only audit trail
 agent/simulator.py        outcome simulation + baseline comparison + net-recovered math
 agent/state_store.py      SQLite persistence for the multi-day workflow
@@ -288,10 +292,11 @@ agent/workflow.py         multi-day stateful workflow orchestrator + idempotency
 agent/pipeline.py         single-pass orchestrator
 run_batch.py              CLI: single-pass batch run
 simulate_workflow.py      CLI: multi-day workflow simulation
-app.py                    Streamlit dashboard
 api.py                    FastAPI service (/decide, /batch/demo, /checkout/*, /webhooks/razorpay)
+dashboard_api.py          FastAPI router: JSON data endpoints for the React dashboard
+frontend/                 React dashboard (Vite) -- Dashboard, Transactions, Timeline, Try, Live tabs
 checkout.html             real Razorpay Checkout frontend (served at GET /checkout)
-tests/                    pytest suite (127 tests)
+tests/                    pytest suite (144 tests)
 .github/workflows/        CI: runs the test suite on every push
 pitch/                    architecture doc, pitch script, build-challenges log, live-Razorpay setup guide
 ```

@@ -3,12 +3,10 @@ Read-oriented API surface for the React dashboard (frontend/). Mounted into
 api.py's FastAPI app via an APIRouter -- one server, one port, same
 security posture (rate limiting from api.py's middleware applies here too).
 
-Reuses the exact same agent functions the Streamlit dashboard (app.py) used
--- run_pipeline, run_workflow, decide, model.explain, build_call,
+Reuses the exact same agent functions the project's CLIs use --
+run_pipeline, run_workflow, decide, model.explain, build_call,
 generate_message, estimate_cost -- so behavior is identical to what's
 already tested, not a second implementation that could drift from it.
-app.py is untouched and still works; this is an additional consumer of the
-same agent package, not a replacement for it at the Python level.
 """
 from __future__ import annotations
 
@@ -46,9 +44,8 @@ RISK_TYPE_LABEL = {
     "invoice_overdue": "Overdue invoice",
 }
 
-# --- in-memory cache of (df, results, summary, systemic_issues) per seed,
-# mirroring Streamlit's st.cache_data -- avoids re-running the whole
-# pipeline on every request for the same seed.
+# --- in-memory cache of (df, results, summary, systemic_issues) per seed --
+# avoids re-running the whole pipeline on every request for the same seed.
 _run_cache: dict[int, tuple] = {}
 _timeline_cache: dict[tuple[int, int], "pd.DataFrame"] = {}
 

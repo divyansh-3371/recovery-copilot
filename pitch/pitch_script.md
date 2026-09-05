@@ -2,103 +2,91 @@
 
 Timing is a guide, not a script to read verbatim — say it in your own words.
 
-## 0:00–0:40 — The problem (hook)
+## 0:00–0:25 — Hook
 
 > "Revenue loss at a payments company almost never happens in one clean
-> step. A payment degrades, a checkout gets abandoned, a subscription
-> mandate fails, an invoice goes overdue. Most systems treat each of these
-> as a dead end — log it, maybe fire one generic retry, move on. I built
-> Recovery Copilot: an agent that closes the loop — detects the revenue at
-> risk, figures out *why* it's at risk, picks the cheapest intervention that
-> will actually work, executes it, and proves with real numbers that it
-> recovered more money than doing nothing smarter would have."
+> step — a payment fails, a checkout gets abandoned, a subscription
+> mandate breaks, an invoice goes overdue. Most systems log it and stop.
+> I built Recovery Copilot: an agent that detects the risk, figures out
+> why, picks the right intervention, executes it for real, and proves
+> the money it recovered."
 
-## 0:40–1:10 — What it is, in one breath
+## 0:25–0:50 — What it is
 
-> "It's a Python agent pipeline: a trained recoverability model scores every
-> at-risk transaction, a root-cause detector watches for infrastructure
-> outages so we don't blame the customer for the bank's problem, a policy
-> engine picks one of six bounded actions under strict stopping rules, and
-> every single decision is logged to a full audit trail. Then a simulator
-> proves the ₹ impact against a naive baseline on the same batch."
+> "It's a Python agent — a trained recoverability model scores every
+> at-risk transaction, a root-cause detector catches infrastructure
+> outages before blaming the customer, a policy engine picks one of six
+> bounded actions under strict compliance stopping rules, and — this is
+> the part most buildathon projects don't get to — it's connected to a
+> real, live Razorpay account, executing real recovery actions."
 
-## 1:10–3:00 — Live demo (dashboard walkthrough)
+## 0:50–1:50 — Dashboard tab
 
-The dashboard is four tabs — Dashboard, Transactions, Recovery timeline,
-Try a transaction — designed to read like a real product a merchant would
-actually use, not a technical review screen. Every technical/audit detail
-is still there, just tucked into a collapsed "Technical details" section
-on the tabs that have one, so the primary view stays clean.
+> "This is the Dashboard, running on a batch of transactions." [Point at
+> hero number] "This period it recovered ₹X out of ₹Y at risk." [Point at
+> Heads up card] "It just caught a netbanking outage on its own — 37x
+> normal — and paused retries instead of spamming customers during a
+> bank-side problem." [Point at charts] "Recovered by category vs. a
+> naive approach, and what's actually happening operationally — click a
+> bar, see a real example."
 
-1. **Dashboard tab.** Lead with the hero number: *"This period, Recovery
-   Copilot recovered ₹X for you, out of ₹Y at risk."* Point at the
-   **Heads up card**: *"The agent just caught a netbanking outage on its
-   own — 37x the normal rate — and paused customer-facing retries for it
-   instead of spamming people during an outage that isn't their fault."*
-   Then the KPI row and the two charts: *"Recovered by category, before
-   Recovery Copilot vs after — and what's actually happening operationally."*
-   Click a bar on the "What's happening" chart: *"Not static — clicking
-   shows a real example transaction that got that decision."*
-2. **Transactions tab.** Filter or scroll to any row, then look one up:
-   *"Here's Recovery Copilot's confidence and exactly why — in plain
-   language, not a model dump. Here's what we did and why. Here's the
-   actual message that went to the customer."* Expand **Technical details**:
-   *"And if you want the raw model output, the exact Razorpay API call
-   this would trigger, and the full timestamped audit trail — it's all
-   right here, not hidden."* Find one with a promise-to-pay note:
-   *"When a customer promises to pay instead of paying immediately, the
-   tracker checks whether that promise was kept — a broken one gets
-   auto-escalated, not quietly dropped."*
-3. **Recovery timeline tab:** *"The Dashboard is one snapshot. This shows
-   what happens over several simulated days as Recovery Copilot follows
-   up — and it recovers even more than the single snapshot, because
-   follow-up gives every case multiple chances, not just one."*
-4. **Try a transaction tab, to close the demo — prove it's not a canned
-   report.** Change the amount field from something mid-size down to ₹60
-   on camera: *"Watch the decision itself change, live — not pre-computed."*
-   Point at it flipping from a reminder to "left alone, not worth pursuing."
-   Then push it above ₹75,000 on any reason: *"— and now it goes straight
-   to a specialist, regardless of what the usual reason-based routing
-   would have picked. Same engine as everywhere else on this page, running
-   on whatever you type."*
-8. **If you have a `voice_hinglish` transaction:** click play. *"For
-   returning customers who've already missed one attempt, the agent
-   switches to a Hinglish voice nudge — synthesized fully offline, no
-   internet dependency."*
+## 1:50–2:30 — Transactions + Try a transaction
 
-## 3:00–4:00 — Why this is more than a script with if/else
+> "Every decision is explainable —" [open a transaction] "here's Recovery
+> Copilot's confidence, in plain language, and exactly what it did and
+> why." [Switch to Try a transaction] "And this isn't canned — change the
+> amount live" [drag it past ₹75,000] "— watch it flip straight to a
+> specialist, regardless of the usual reason-based routing."
 
-> "Three things make this a real system, not a demo toy: the recoverability
-> score comes from an actual trained model, not a hardcoded rule, and it's
-> fully explainable per transaction. The root-cause detector catches
-> systemic infrastructure problems before the policy engine ever decides to
-> retry — that's the difference between a system that understands payments
-> and one that just spams customers. And the stopping rules aren't a
-> suggestion — do-not-contact, attempt caps, and an economical-amount floor
-> are checked before anything else, every time."
+## 2:30–4:30 — Live tab (the centerpiece)
 
-## 4:00–4:40 — What broke, and what I learned fixing it
+> "Here's what makes this real, not a demo. This is a live, connected
+> Razorpay account — Test Mode, so no real money moves, but every other
+> part of this is genuine."
+> [Open Live tab, show the embedded checkout] "I'll make a real payment
+> and fail it on purpose." [Pick a customer type, pay with a real
+> Razorpay test failure card]
+> "The moment that fails, Razorpay's own servers call my webhook
+> directly — no polling, no human — and the exact same model and policy
+> engine that scored the batch scores this, in real time." [Point at the
+> decision appearing]
+> "And it doesn't stop at a label —" [point at execution result] "it
+> actually creates a real, payable Razorpay Payment Link, or sends a real
+> email to the customer, right now." [Show the 'Recovered so far' KPI]
+> "And if that link gets paid, this dashboard tracks the real recovered
+> amount, live, against Razorpay's own API — not a simulated number."
 
-> "The root-cause detector didn't fire at all on the first random batch —
-> splitting by payment method fragmented the volume too much for a natural
-> spike to clear the threshold. I fixed it the way real monitoring demos
-> do: inject one deliberate, labeled incident so the detector has something
-> reliable to catch — and it ended up catching a second, unplanned pattern
-> in the random data too, which told me the detector logic itself was
-> sound." *(See `pitch/build_challenges.md` for the full list — five real
-> issues, each with its root cause and fix.)*
+## 4:30–4:50 — Why this is more than a script
 
-## 4:40–5:00 — Close
+> "Three things make this a real system: the recoverability score comes
+> from an actual trained model, fully explainable per transaction. The
+> root-cause detector separates a bank outage from a customer problem
+> before anything else decides. And the stopping rules — do-not-contact,
+> attempt caps, an economical-amount floor — are checked before any
+> customer-facing action, every time, with a full audit trail."
 
-> "Recovery Copilot: detect, diagnose, decide, execute, prove — with an
-> audit trail a compliance reviewer could actually read. That's AI Revenue
-> Recovery done the way Razorpay's own bar asks for it."
+## 4:50–5:00 — Close
+
+> "Recovery Copilot: detect, diagnose, decide, execute, prove —
+> connected to a real payment gateway, executing real recovery actions,
+> not just describing what it would do. That's AI Revenue Recovery,
+> actually recovering revenue."
 
 ---
 
 ## Recording checklist
 
-- [ ] `streamlit run app.py` running locally before you hit record
-- [ ] Pick a batch seed in advance that shows a systemic issue banner (default seed 42 does)
-- [ ] Have one `SEND_MESSAGE` transaction and one `voice_hinglish` transaction ID noted for the drill-down
-- [ ] Screen + voice recording, 5 minutes, upload and paste the link into the submission form
+- [ ] `uvicorn api:app --port 8010` running, with `.env` loaded
+      (Razorpay + Resend configured)
+- [ ] `ngrok http 8010` running, webhook URL registered in the Razorpay
+      dashboard matches the current tunnel URL
+- [ ] `cd frontend && npm run dev` running, dashboard open at
+      `localhost:5173`
+- [ ] Pick a batch seed in advance that shows a systemic issue banner
+      (default seed 42 does)
+- [ ] Have a Razorpay test failure card ready
+      (`4100 2800 0006 0003` — card declined)
+- [ ] Do one practice run of the Live tab flow before recording for real
+      — payment → webhook → decision → execution can take a few seconds
+- [ ] Screen + voice recording, ~5 minutes, upload and paste the link
+      into the submission form
