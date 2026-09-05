@@ -331,3 +331,99 @@ still gets it without it being the default experience for everyone else.
 Verified every tab live after the rewrite, including that the cleanup
 regex doesn't mangle real reasoning text (tested against all the actual
 strings the policy engine produces, not synthetic examples).
+
+## 18. Rebuilding the dashboard on React meant one backend, two audiences
+
+**Problem:** asked to drop Streamlit entirely and rebuild the dashboard
+purely on React, with zero regression in what the Streamlit version could
+already do -- five tabs' worth of synthetic-batch analytics, a live
+Razorpay-connected tab, and an interactive "try a scenario" tool, all
+reading from the same trained model and policy engine so nothing could
+silently drift between what the demo shows and what the real code does.
+
+**Fix:** kept Python/FastAPI as the single source of truth (`api.py` for
+the real Razorpay surface, `dashboard_api.py` as a read-oriented router
+reusing the exact same `run_pipeline`/`decide`/`build_call` functions the
+CLIs use) and built the entire UI as a separate Vite/React app
+(`frontend/`) talking to it over plain JSON. Streamlit's `app.py` was
+deleted outright rather than left dormant. The old Streamlit UI made
+"live recompute" free (any widget change reruns the whole script); React
+doesn't get that for free, so every tab's state (seed, filters, selected
+transaction) is explicit `useState`, refetched via a small typed `api.js`
+client instead of relying on a framework-level rerun.
+
+## 19. Real email delivery needed a completely different transport than planned
+
+**Problem:** Gmail SMTP (the original plan) failed every send in this dev
+environment -- outbound ports 25/465/587 are blocked at the network level,
+not a credentials problem, so no amount of app-password debugging would
+have fixed it.
+
+**Fix:** switched to Resend's HTTP API (plain HTTPS, not SMTP -- immune to
+the port block). That surfaced two more real obstacles: Resend's API
+rejected requests with error 1010 until a real browser-like `User-Agent`
+header was added (Cloudflare's bot protection was blocking the default
+Python client), and Resend's free sandbox sender can only deliver to the
+account's own verified address, not arbitrary customer emails -- solved
+with an `EMAIL_RECIPIENT_OVERRIDE` env var that force-routes test sends to
+a known-deliverable address while leaving the Payment Link's own
+`customer_email` (Razorpay's real record) untouched.
+
+## 20. Quiet hours and "act immediately" looked like a contradiction, but weren't
+
+**Problem:** the policy engine's quiet-hours rule (10pm-8am) existed to
+stop the agent from messaging a customer at an antisocial hour -- but a
+customer who has *just* failed a payment on the checkout page is not
+someone being "reached out to," they're already there. Naively applying
+the same gate to that moment would have deferred the one thing (a
+retry link) most likely to recover the payment while the customer's
+attention is still on the page.
+
+**Fix:** split "create the recovery link" (always immediate -- it's a
+response to the customer's own action, not proactive outreach) from "send
+the unprompted email/SMS about it" (still gated by quiet hours). Verified
+live against real IST-localized webhook timestamps
+(`agent/razorpay_live.py`'s `_local_hour_from_created_at`): during quiet
+hours the response now honestly reports `deferred_quiet_hours: true,
+emailed: false` while still returning a working `short_url` the customer
+can pay through immediately.
+
+## 21. A real logic contradiction: the agent could abandon the exact customer it exists to save
+
+**Problem:** self-reported by walking through a concrete case -- a new,
+first-time customer failing a low-value (₹500) payment, scored low by the
+model, hit the same "low confidence + low value -> STOP" rule a returning
+customer would. But a merchant already spent real acquisition cost (ads,
+onboarding) getting that customer to checkout; abandoning them at the
+first hiccup throws away a sunk cost the model's score doesn't account
+for, which directly contradicts the project's own premise.
+
+**Fix:** treated it as a full policy audit rather than a one-line patch --
+reasoned through the decision table the way a real risk officer would,
+ahead of touching code. Found and fixed four related issues together:
+new/VIP customers are now exempt from both the low-score stop *and* the
+uneconomical-amount floor (sunk cost applies to both); a customer who
+exhausts every retry attempt now escalates to a human for VIP/high-value
+instead of silently stopping; and systemic-issue (bank outage) detection
+was moved to the very front of `decide()`, ahead of every customer-specific
+stopping rule, so an outage is never hidden behind an unrelated
+do-not-contact flag or a tiny transaction amount. 9 new tests pin the
+corrected behavior down.
+
+## 22. A retried payment was silently double-counted as a second, independent purchase
+
+**Problem:** every Razorpay recovery link creates a brand-new payment ID
+when someone pays through it -- so a customer who fails, gets a "Pay now"
+link, and fails again on *that* link produced two fully independent-
+looking rows on the live dashboard, each carrying the full amount. "Total
+amount involved" summed both, silently reporting 2x the merchant's actual
+money at risk for one ₹500 purchase attempted twice.
+
+**Fix:** every recovery link is now tagged, via Razorpay's own `notes`
+field, with the root transaction it's recovering -- its own ID on a first
+failure, or the root it already carries if this failure is itself a
+retry, so a whole chain of repeated attempts collapses to one root.
+Verified for real, not just in tests: fetched a created link's notes back
+from Razorpay's own API (not our logs) to confirm they genuinely reached
+Razorpay, then simulated that link failing again and confirmed the new
+link stayed pinned to the same root instead of restarting the chain.
