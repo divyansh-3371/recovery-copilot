@@ -196,6 +196,25 @@ def decide(row: pd.Series, score: float, systemic_issues: dict[tuple[str, str], 
         d.action = "ESCALATE_HUMAN"
         d.reasoning.append(f"Low model confidence ({score:.2f}) but high value (₹{row['amount']:.0f}/{row['customer_segment']}) — worth a human recovery agent.")
 
+    # --- a new customer's low score doesn't mean "not worth trying" the
+    # way a returning customer's does: the merchant already spent real
+    # acquisition cost (ad spend, onboarding) getting this person to a
+    # checkout at all, and that cost is sunk whether we try or not. A
+    # cheap nudge (an SMS, not a human agent -- that's not economical for
+    # a low-value transaction either way) has an asymmetric payoff here:
+    # small downside if it fails, real upside (a recovered CAC-bearing
+    # customer relationship) if it doesn't. A returning/VIP customer at
+    # the same low score has no such recapture argument -- they're already
+    # acquired, so a genuinely low-probability, low-value case for them
+    # really is just not worth pursuing further.
+    elif score < LOW_SCORE and row["customer_segment"] == "new":
+        d.action = "SEND_MESSAGE"
+        d.channel = _choose_channel(row, score)
+        d.reasoning.append(
+            f"Low model confidence ({score:.2f}), but this is a new customer — the acquisition cost already spent "
+            f"getting them here is sunk either way, so a cheap nudge is worth it even at low odds, unlike a returning customer."
+        )
+
     else:
         d.stopping_rule_triggered = "low_confidence_low_value"
         d.reasoning.append(f"Low recoverability score ({score:.2f}) and low value — not worth pursuing further.")

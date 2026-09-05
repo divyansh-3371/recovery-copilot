@@ -57,10 +57,23 @@ def test_high_score_payment_failure_retries():
     assert d.retry_delay_hours is not None
 
 
-def test_low_score_low_value_stops():
-    row = make_row(amount=500.0, customer_segment="new")
+def test_low_score_low_value_stops_for_returning_customer():
+    # A returning customer has already been acquired -- no sunk-CAC argument
+    # for a genuinely low-probability, low-value case, so stopping is right.
+    row = make_row(amount=500.0, customer_segment="returning")
     d = decide(row, score=0.1, systemic_issues={})
     assert d.stopping_rule_triggered == "low_confidence_low_value"
+
+
+def test_low_score_new_customer_still_gets_a_cheap_nudge_not_a_stop():
+    # A new customer's low score doesn't mean "not worth it" the way a
+    # returning customer's does -- the merchant already spent real
+    # acquisition cost getting them to a checkout, sunk whether we try or
+    # not, so a cheap nudge (not a human agent) is still worth it here.
+    row = make_row(amount=500.0, customer_segment="new")
+    d = decide(row, score=0.1, systemic_issues={})
+    assert d.action == "SEND_MESSAGE"
+    assert d.stopping_rule_triggered is None
 
 
 def test_low_score_high_value_escalates_to_human():
