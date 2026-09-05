@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { ACTION_LABEL, RISK_TYPE_LABEL, humanize, formatMoney, displayReasoning, friendlyFeature, strength } from "../labels";
+import {
+  ACTION_LABEL, RISK_TYPE_LABEL, humanize, formatMoney, displayReasoning, shortReason,
+  friendlyFeature, strength, actionColor,
+} from "../labels";
 
 export default function TransactionsTab({ seed }) {
   const [rows, setRows] = useState(null);
@@ -9,6 +12,7 @@ export default function TransactionsTab({ seed }) {
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
   const [showTechnical, setShowTechnical] = useState(false);
+  const [showFullReasoning, setShowFullReasoning] = useState(false);
 
   useEffect(() => {
     setRows(null);
@@ -18,14 +22,37 @@ export default function TransactionsTab({ seed }) {
     if (filters.risk_type) params.risk_type = filters.risk_type;
     if (filters.agent_action) params.action = filters.agent_action;
     if (filters.customer_segment) params.customer_segment = filters.customer_segment;
-    api.transactions(seed, params).then((d) => setRows(d.transactions)).catch((e) => setError(e.message));
+
+    Promise.all([
+      api.transactions(seed, params).then((d) => d.transactions),
+      // Real transactions are always risk_type=payment_failure -- if a
+      // filter picked something else, they'd never match anyway, so skip
+      // fetching them at all rather than fetch-then-discard.
+      (!filters.risk_type || filters.risk_type === "payment_failure")
+        ? api.liveTransactions().then((d) => d.transactions.map(normalizeLiveRow))
+        : Promise.resolve([]),
+    ]).then(([synthetic, live]) => {
+      const filteredLive = live.filter((r) =>
+        (!filters.agent_action || r.agent_action === filters.agent_action) &&
+        (!filters.customer_segment || r.customer_segment === filters.customer_segment)
+      );
+      // Real transactions first -- they're what a merchant would actually
+      // want to see before a synthetic demo batch.
+      setRows([...filteredLive, ...synthetic]);
+    }).catch((e) => setError(e.message));
   }, [seed, filters]);
 
   useEffect(() => {
     if (!selectedId) return;
     setDetail(null);
-    api.transactionDetail(selectedId, seed).then(setDetail).catch((e) => setError(e.message));
-  }, [selectedId, seed]);
+    setShowFullReasoning(false);
+    const row = (rows || []).find((r) => r.transaction_id === selectedId);
+    if (row && row._source === "live") {
+      setDetail({ _source: "live", ...row._liveEntry });
+      return;
+    }
+    api.transactionDetail(selectedId, seed).then((d) => setDetail({ _source: "synthetic", ...d })).catch((e) => setError(e.message));
+  }, [selectedId, seed, rows]);
 
   if (error) return <div className="empty-state">Couldn't load transactions: {error}</div>;
 
@@ -36,7 +63,7 @@ export default function TransactionsTab({ seed }) {
   return (
     <div>
       <h2>All transactions</h2>
-      <p style={{ color: "var(--ink-secondary)" }}>Every payment issue Recovery Copilot has handled this period.</p>
+      <p style={{ color: "var(--ink-secondary)" }}>Every payment issue Recovery Copilot has handled this period — real ones first, then the simulated batch.</p>
 
       <div className="grid-3" style={{ marginBottom: 16 }}>
         <div>
@@ -69,20 +96,25 @@ export default function TransactionsTab({ seed }) {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Transaction</th><th>Issue</th><th>Reason</th><th>Amount</th>
+                <th>Source</th><th>Transaction</th><th>Issue</th><th>Reason</th><th>Amount</th>
                 <th>Customer</th><th>Confidence</th><th>Action</th><th>Result</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.transaction_id} onClick={() => setSelectedId(r.transaction_id)}>
+                  <td>
+                    {r._source === "live"
+                      ? <span className="badge critical" title="A real webhook-driven transaction">Live</span>
+                      : <span className="badge" style={{ background: "#eef0f3", color: "var(--ink-muted)" }}>Demo</span>}
+                  </td>
                   <td><code>{r.transaction_id}</code></td>
                   <td>{RISK_TYPE_LABEL[r.risk_type] || r.risk_type}</td>
                   <td>{humanize(r.failure_reason)}</td>
                   <td>{formatMoney(r.amount)}</td>
                   <td>{humanize(r.customer_segment)}</td>
-                  <td>{Math.round(r.recoverability_score * 100)}%</td>
-                  <td>{ACTION_LABEL[r.agent_action] || r.agent_action}</td>
+                  <td>{r.recoverability_score != null ? `${Math.round(r.recoverability_score * 100)}%` : "—"}</td>
+                  <td style={{ color: actionColor(r.agent_action), fontWeight: 600 }}>{ACTION_LABEL[r.agent_action] || r.agent_action}</td>
                   <td>{r.agent_resolved ? "✅ Recovered" : "In progress"}</td>
                 </tr>
               ))}
@@ -91,13 +123,67 @@ export default function TransactionsTab({ seed }) {
         </div>
       )}
 
-      {selectedId && (
+      {selectedId && detail && detail._source === "live" && (
+        <div style={{ marginTop: 20 }}>
+          <h3>Transaction detail <span className="badge critical" style={{ marginLeft: 6 }}>Live</span></h3>
+          <div className="card">
+            <p><strong>Amount:</strong> {formatMoney(detail.amount)} · <strong>Reason:</strong> {humanize(detail.failure_reason)} ·{" "}
+              <strong>Customer:</strong> {humanize(detail.customer_segment || "unknown")}</p>
+            <p><strong>What we did:</strong> <span style={{ color: actionColor(detail.action), fontWeight: 700 }}>{ACTION_LABEL[detail.action] || detail.action}</span></p>
+            {detail.recoverability_score != null && <p><strong>Confidence:</strong> {Math.round(detail.recoverability_score * 100)}%</p>}
+            {Array.isArray(detail.reasoning) && detail.reasoning.length > 0 && (
+              <p>
+                <strong>Why: </strong>
+                {showFullReasoning ? (
+                  <ul className="reasoning-list" style={{ marginTop: 6 }}>
+                    {detail.reasoning.map((r, i) => <li key={i}>{displayReasoning(r)}</li>)}
+                  </ul>
+                ) : shortReason(detail.reasoning)}
+                {" "}
+                <button
+                  onClick={() => setShowFullReasoning(!showFullReasoning)}
+                  style={{ background: "none", border: "none", color: "var(--blue)", cursor: "pointer", fontSize: "0.85em", padding: 0 }}
+                >
+                  {showFullReasoning ? "Show less" : "Show more"}
+                </button>
+              </p>
+            )}
+            {detail.execution_detail && (
+              <p style={{ fontSize: "0.9rem" }}>
+                {detail.execution_detail.short_url && (
+                  <>
+                    <strong>Payment link:</strong>{" "}
+                    <a href={detail.execution_detail.short_url} target="_blank" rel="noopener noreferrer">{detail.execution_detail.short_url}</a><br />
+                  </>
+                )}
+                {detail.execution_detail.sent_to && <><strong>Emailed to:</strong> {detail.execution_detail.sent_to}<br /></>}
+                {detail.execution_detail.error && <span style={{ color: "var(--status-critical)" }}>Execution failed: {detail.execution_detail.error}</span>}
+              </p>
+            )}
+          </div>
+
+          <div className="card" style={{ marginTop: 16 }}>
+            <button className="btn secondary" onClick={() => setShowTechnical(!showTechnical)}>
+              {"🔧"} {showTechnical ? "Hide" : "Show"} technical details
+            </button>
+            {showTechnical && (
+              <div style={{ marginTop: 12, fontSize: "0.85rem" }}>
+                <p><strong>Transaction ID:</strong> <code>{detail.transaction_id}</code></p>
+                <p><strong>Event:</strong> <code>{detail.event}</code> from Razorpay's webhook</p>
+                <p>
+                  <strong>Raw Razorpay error:</strong> <code>{detail.raw_error_reason || "—"}</code> /{" "}
+                  <code>{detail.raw_error_code || "—"}</code> — {detail.raw_error_description || "—"}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {selectedId && detail && detail._source === "synthetic" && (
         <div style={{ marginTop: 20 }}>
           <h3>Transaction detail</h3>
-          {!detail ? (
-            <div className="loading-state">Loading…</div>
-          ) : (
-            <div className="grid-2">
+          <div className="grid-2">
               <div className="card">
                 <p><strong>Customer:</strong> {detail.customer_name} ({humanize(detail.customer_segment)})</p>
                 <p><strong>Amount:</strong> {formatMoney(detail.amount)} · <strong>Issue:</strong> {RISK_TYPE_LABEL[detail.risk_type] || detail.risk_type}</p>
@@ -135,11 +221,9 @@ export default function TransactionsTab({ seed }) {
                   </>
                 )}
               </div>
-            </div>
-          )}
+          </div>
 
-          {detail && (
-            <div className="card" style={{ marginTop: 16 }}>
+          <div className="card" style={{ marginTop: 16 }}>
               <button className="btn secondary" onClick={() => setShowTechnical(!showTechnical)}>
                 {"🔧"} {showTechnical ? "Hide" : "Show"} technical details
               </button>
@@ -172,10 +256,30 @@ export default function TransactionsTab({ seed }) {
                   </table>
                 </div>
               )}
-            </div>
-          )}
+          </div>
         </div>
       )}
+
+      {selectedId && !detail && <div className="loading-state" style={{ marginTop: 20 }}>Loading…</div>}
     </div>
   );
+}
+
+// Reshapes a /dashboard/live-transactions entry into the same row shape
+// the synthetic table already uses, so both can render in one table --
+// tagged with _source/_liveEntry so a click knows how to show detail
+// without a second, incompatible API call.
+function normalizeLiveRow(entry) {
+  return {
+    transaction_id: entry.transaction_id,
+    risk_type: "payment_failure",
+    failure_reason: entry.failure_reason,
+    amount: entry.amount,
+    customer_segment: entry.customer_segment || "unknown",
+    recoverability_score: entry.recoverability_score,
+    agent_action: entry.action,
+    agent_resolved: false, // real recovery status lives on the Live tab's own polling; kept simple here
+    _source: "live",
+    _liveEntry: entry,
+  };
 }
