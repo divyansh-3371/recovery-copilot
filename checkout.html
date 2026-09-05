@@ -155,15 +155,30 @@ payBtn.onclick = async function () {
     },
     modal: {
       ondismiss: function () {
-        setStatus('Checkout closed.', 'status-info');
-        payBtn.disabled = false;
+        // With retry disabled below, a failed payment closes this modal
+        // automatically -- ondismiss fires for that case too, not just a
+        // manual close. Don't clobber the more specific "Payment failed"
+        // status the payment.failed handler already set.
+        if (!paymentFailedHandled) {
+          setStatus('Checkout closed.', 'status-info');
+          payBtn.disabled = false;
+        }
       },
     },
+    // Disables Razorpay's own "Retry payment with Cards/Netbanking/..."
+    // screen entirely -- without this, a failed payment leaves that
+    // screen open indefinitely, sitting on top of (and hiding) our own
+    // decision box until the customer manually closes it. With it, the
+    // modal closes itself the instant the payment fails, so the decision
+    // is visible immediately, with no action needed from the customer.
+    retry: { enabled: false },
     theme: { color: '#2a78d6' },
   };
 
+  let paymentFailedHandled = false;
   const rzp = new Razorpay(options);
   rzp.on('payment.failed', function (response) {
+    paymentFailedHandled = true;
     setStatus('Payment failed: ' + response.error.description, 'status-error');
     payBtn.disabled = false;
     const paymentId = response.error && response.error.metadata && response.error.metadata.payment_id;
